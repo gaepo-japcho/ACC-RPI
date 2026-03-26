@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# YOLO models & training artifacts
+*.pt
+training/images/
+training/labels/
+training/runs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
