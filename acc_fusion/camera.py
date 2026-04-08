@@ -2,6 +2,7 @@ import cv2
 import time
 import numpy as np
 from dataclasses import dataclass, field
+from common.singleton import Singleton
 
 
 @dataclass
@@ -11,7 +12,7 @@ class CameraFrame:
     frame_id: int = 0
 
 
-class CameraReader:
+class CameraReader(metaclass=Singleton):
     def __init__(
         self,
         source: int | str = 0,

@@ -2,6 +2,7 @@ import time
 import numpy as np
 from dataclasses import dataclass, field
 from rplidar import RPLidar as _RPLidar
+from common.singleton import Singleton
 
 
 @dataclass
@@ -11,7 +12,7 @@ class LidarScan:
     scan_id: int = 0
 
 
-class LidarReader:
+class LidarReader(metaclass=Singleton):
     def __init__(
         self,
         port: str = "/dev/ttyUSB0",
