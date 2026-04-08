@@ -1,13 +1,18 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from common import get_logger
+
+log = get_logger(__name__)
 
 
 class YOLODetector:
     def __init__(self, model_path="yolo26n.pt", conf_threshold=0.5, device="cpu"):
+        log.info(f"YOLO 모델 로드: {model_path} (conf={conf_threshold}, device={device})")
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.device = device
+        log.info("YOLO 모델 로드 완료")
 
     def detect(self, frame: np.ndarray) -> list[dict]:
         """
@@ -43,6 +48,7 @@ class YOLODetector:
                     }
                 )
 
+        log.debug(f"감지 결과: {len(detections)}개 객체")
         return detections
 
     @classmethod

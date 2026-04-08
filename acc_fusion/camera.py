@@ -3,6 +3,9 @@ import time
 import numpy as np
 from dataclasses import dataclass, field
 from common.singleton import Singleton
+from common import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -38,11 +41,13 @@ class CameraReader(metaclass=Singleton):
     def open(self) -> bool:
         self._cap = cv2.VideoCapture(self.source)
         if not self._cap.isOpened():
+            log.error(f"카메라 열기 실패: source={self.source}")
             return False
 
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
+        log.info(f"카메라 열기 성공: source={self.source} {self.width}x{self.height} @{self.fps}fps")
         return True
 
     def read(self) -> CameraFrame | None:
@@ -51,6 +56,7 @@ class CameraReader(metaclass=Singleton):
 
         ret, frame = self._cap.read()
         if not ret:
+            log.warning("카메라 프레임 읽기 실패")
             return None
 
         self._frame_id += 1
@@ -60,6 +66,7 @@ class CameraReader(metaclass=Singleton):
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+            log.info(f"카메라 닫힘: source={self.source}")
 
     def __enter__(self):
         if not self.open():

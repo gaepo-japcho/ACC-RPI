@@ -3,6 +3,9 @@ import numpy as np
 from dataclasses import dataclass, field
 from rplidar import RPLidar as _RPLidar
 from common.singleton import Singleton
+from common import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -35,6 +38,10 @@ class LidarReader(metaclass=Singleton):
         self._lidar: _RPLidar | None = None
         self._scan_id = 0
 
+    def open(self) -> None:
+        self._lidar = _RPLidar(self.port, self.baudrate)
+        log.info(f"LiDAR 연결: port={self.port} baudrate={self.baudrate}")
+
     def _to_array(self, scan) -> np.ndarray:
         return np.array(
             [[angle, distance] for _, angle, distance in scan], dtype=np.float32
@@ -57,6 +64,7 @@ class LidarReader(metaclass=Singleton):
         for scan in self._lidar.iter_scans():
             arr = self._to_array(scan)
             self._scan_id += 1
+            log.debug(f"LiDAR raw scan_id={self._scan_id} points={len(arr)}")
             return LidarScan(points=arr, timestamp=time.time(), scan_id=self._scan_id)
 
         return None
@@ -77,6 +85,7 @@ class LidarReader(metaclass=Singleton):
             self._lidar.stop()
             self._lidar.disconnect()
             self._lidar = None
+            log.info(f"LiDAR 연결 해제: port={self.port}")
 
     def __enter__(self):
         self.open()

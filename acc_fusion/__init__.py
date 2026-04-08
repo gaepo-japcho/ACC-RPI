@@ -5,7 +5,10 @@ import threading
 import numpy as np
 
 from common.singleton import Singleton
+from common import get_logger
 from interfaces.fusion import FusionData
+
+log = get_logger(__name__)
 
 __all__ = ["FusionData", "Fusion"]
 
@@ -37,23 +40,28 @@ class Fusion(metaclass=Singleton):
         )
 
     def __enter__(self) -> "Fusion":
+        log.info("Fusion 시작")
         self._cam.open()
         self._lidar.open()
         self._camera_thread.start()
         self._lidar_thread.start()
+        log.info("카메라/LiDAR 워커 스레드 시작")
         return self
 
     def __exit__(self, *_) -> None:
+        log.info("Fusion 종료 중...")
         self._stop_event.set()
         self._camera_thread.join(timeout=2.0)
         self._lidar_thread.join(timeout=2.0)
         self._cam.close()
         self._lidar.close()
+        log.info("Fusion 종료 완료")
 
     def _camera_worker(self) -> None:
         while not self._stop_event.is_set():
             frame = self._cam.read()
             if frame is None:
+                log.warning("카메라 워커: 프레임 읽기 실패")
                 continue
             detections = self._detector.detect(frame.image)
             vehicles = [d for d in detections if d["class_name"] in _VEHICLE_CLASSES]
@@ -64,6 +72,7 @@ class Fusion(metaclass=Singleton):
         while not self._stop_event.is_set():
             scan = self._lidar.read()
             if scan is None:
+                log.warning("LiDAR 워커: 스캔 읽기 실패")
                 continue
             with self._scan_lock:
                 self._latest_scan = scan
@@ -95,6 +104,7 @@ class Fusion(metaclass=Singleton):
             scan = self._latest_scan
 
         if scan is None or len(scan.points) == 0:
+            log.debug("전방 차량 감지, LiDAR 데이터 없음")
             return FusionData(detected=True, distance=0)
 
         angles = scan.points[:, 0]
@@ -102,9 +112,11 @@ class Fusion(metaclass=Singleton):
         front_points = scan.points[front_mask]
 
         if len(front_points) == 0:
+            log.debug("전방 차량 감지, 전방 LiDAR 포인트 없음")
             return FusionData(detected=True, distance=0)
 
         distance_cm = int(np.min(front_points[:, 1]) / 10)
+        log.debug(f"전방 차량 감지: distance={distance_cm}cm")
         return FusionData(detected=True, distance=distance_cm)
 
     def update_fusion_data(self) -> FusionData:
