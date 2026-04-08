@@ -57,8 +57,8 @@ BUTTON_AVAILABILITY: dict[AccState, dict[str, bool]] = {
 }
 
 # 1/10 스케일카 파라미터 (SYS032 / STK024)
-MIN_SET_SPEED_MPS = 0.3   # m/s
-SPEED_INCREMENT_MPS = 0.1  # m/s per click
+MIN_SET_SPEED_MPS = 0.05   # 5 cm/s
+SPEED_INCREMENT_MPS = 0.01  # 1 cm/s per click (inferred from ACC docs resolution)
 DEFAULT_DISTANCE_LEVEL = 3  # ACC 활성화 시 기본 안전거리 단계
 
 

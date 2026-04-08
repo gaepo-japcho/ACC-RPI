@@ -7,7 +7,7 @@ import signal
 import sys
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QFrame, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
@@ -22,10 +22,15 @@ from acc_state import AccState, AccController
 # ═══════════════════════════════════════════════════════════════
 #  Design Tokens
 # ═══════════════════════════════════════════════════════════════
-BG = "#060606"
-PANEL = "#0a0a0a"
-BORDER = "#151515"
+BG = "#F2F5F9"
+PANEL = "#FFFFFF"
+BORDER = "#D7E0EA"
 MONO = "Menlo"
+TEXT = "#1D2733"
+TEXT_SUB = "#5F6B7A"
+TEXT_FAINT = "#8A95A3"
+SURFACE = "#FFFFFF"
+SURFACE_ALT = "#EEF3F8"
 
 # 패널/게이지용 일반 색상
 CLR = {
@@ -52,10 +57,10 @@ DIST_CLR = {1: "#E24B4A", 2: "#EF9F27", 3: "#1D9E75"}
 
 # 버튼 기본 스타일
 _BTN_BASE = (
-    "background: #121212; color: #777; border: 2px solid #2a2a2a;"
+    f"background: {SURFACE}; color: {TEXT_SUB}; border: 1px solid {BORDER};"
     "border-radius: 10px; padding: 0 28px; letter-spacing: 1px;"
 )
-_BTN_DISABLED = "background: #0a0a0a; color: #333; border-color: #1a1a1a;"
+_BTN_DISABLED = f"background: {SURFACE_ALT}; color: {TEXT_FAINT}; border-color: {BORDER};"
 
 
 def _font(size: int = 10, bold: bool = False) -> QFont:
@@ -69,8 +74,8 @@ def _btn_style(color: str) -> str:
     """기본 버튼 스타일시트 생성."""
     return f"""
         QPushButton {{ {_BTN_BASE} }}
-        QPushButton:hover {{ border-color: {color}; color: {color}; background: {color}18; }}
-        QPushButton:pressed {{ background: {color}30; }}
+        QPushButton:hover {{ border-color: {color}; color: {color}; background: {color}12; }}
+        QPushButton:pressed {{ background: {color}22; }}
         QPushButton:disabled {{ {_BTN_DISABLED} }}
     """
 
@@ -79,12 +84,12 @@ def _btn_active_style(color: str) -> str:
     """활성 상태 버튼 스타일시트."""
     return f"""
         QPushButton {{
-            background: {color}18; color: {color};
+            background: {color}16; color: {color};
             border: 2px solid {color}; border-radius: 10px;
             padding: 0 28px; letter-spacing: 1px;
         }}
-        QPushButton:hover {{ background: {color}30; }}
-        QPushButton:pressed {{ background: {color}40; }}
+        QPushButton:hover {{ background: {color}24; }}
+        QPushButton:pressed {{ background: {color}34; }}
         QPushButton:disabled {{ {_BTN_DISABLED} }}
     """
 
@@ -132,7 +137,7 @@ class _ArcGauge(QWidget):
         rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)
 
         # Background arc
-        p.setPen(QPen(QColor("#1a1a1a"), arc_w, Qt.SolidLine, Qt.RoundCap))
+        p.setPen(QPen(QColor("#D7DEE8"), arc_w, Qt.SolidLine, Qt.RoundCap))
         p.drawArc(rect, int(v2a(self.max_val) * 16), int(span * 16))
 
         # Filled arc
@@ -154,7 +159,7 @@ class _ArcGauge(QWidget):
             outer = r - arc_w * 0.5 - 2
 
             p.setPen(QPen(
-                QColor("#d0d0d0" if self._value >= val else "#333"),
+                QColor("#8A95A3" if self._value >= val else "#CAD2DC"),
                 2 if major else 1, Qt.SolidLine, Qt.RoundCap,
             ))
             p.drawLine(
@@ -164,7 +169,7 @@ class _ArcGauge(QWidget):
             if major:
                 fs = max(7, min(14, int(r * 0.09)))
                 p.setFont(_font(fs))
-                p.setPen(QColor("#777"))
+                p.setPen(QColor(TEXT_SUB))
                 tr = fs * 3
                 lx, ly = cx + ca * (inner - side * 0.04), cy - sa_ * (inner - side * 0.04)
                 p.drawText(QRectF(lx - tr, ly - tr / 2, tr * 2, tr), Qt.AlignCenter,
@@ -183,7 +188,7 @@ class _ArcGauge(QWidget):
         p.drawLine(QPointF(cx, cy), QPointF(cx + math.cos(na) * nlen, cy - math.sin(na) * nlen))
 
         # Hub
-        p.setPen(QPen(nc, 2)); p.setBrush(QColor("#111"))
+        p.setPen(QPen(nc, 2)); p.setBrush(QColor(SURFACE))
         p.drawEllipse(QPointF(cx, cy), 8, 8)
         p.setPen(Qt.NoPen); p.setBrush(nc)
         p.drawEllipse(QPointF(cx, cy), 3, 3)
@@ -194,11 +199,11 @@ class _ArcGauge(QWidget):
         fs_main = max(10, min(36, int(r * 0.28)))
         fs_unit = max(7, min(14, int(r * 0.10)))
 
-        p.setPen(QColor("#fff")); p.setFont(_font(fs_main, bold=True))
+        p.setPen(QColor(TEXT)); p.setFont(_font(fs_main, bold=True))
         mh = fs_main * 1.5
         p.drawText(QRectF(cx - tw / 2, text_y, tw, mh), Qt.AlignCenter, self.label_fmt.format(self._value))
 
-        p.setPen(QColor("#555")); p.setFont(_font(fs_unit))
+        p.setPen(QColor(TEXT_SUB)); p.setFont(_font(fs_unit))
         uh = fs_unit * 1.8
         p.drawText(QRectF(cx - tw / 2, text_y + mh, tw, uh), Qt.AlignCenter, self.unit)
 
@@ -216,13 +221,13 @@ class _ArcGauge(QWidget):
 
 
 class SpeedGauge(_ArcGauge):
-    max_val = 2.0
-    unit = "m/s"
-    label_fmt = "{:.2f}"
+    max_val = 200.0
+    unit = "cm/s"
+    label_fmt = "{:.0f}"
     grad_colors = ("#1D9E75", "#EF9F27", "#E24B4A")
 
     def _format_tick(self, val):
-        return f"{val:.1f}"
+        return f"{int(val)}"
 
 
 class PwmGauge(_ArcGauge):
@@ -274,7 +279,7 @@ class _VPedalSlider(QWidget):
         cx, gx = w / 2, w / 2 - gw / 2
         hy = self._val_to_y(self._value)
 
-        p.setPen(Qt.NoPen); p.setBrush(QColor("#1a1a1a"))
+        p.setPen(Qt.NoPen); p.setBrush(QColor("#DCE3EB"))
         p.drawRoundedRect(QRectF(gx, 0, gw, h), gw / 2, gw / 2)
 
         if self._value > 0:
@@ -283,7 +288,7 @@ class _VPedalSlider(QWidget):
             p.drawRoundedRect(QRectF(gx, max(0, h - max(h - hy, gw)), gw, max(h - hy, gw)), gw / 2, gw / 2)
             p.setClipping(False)
 
-        p.setBrush(QColor("#333")); p.setPen(QPen(self._color, 2))
+        p.setBrush(QColor(SURFACE)); p.setPen(QPen(self._color, 2))
         p.drawEllipse(QPointF(cx, hy), hd / 2, hd / 2)
         p.end()
 
@@ -299,18 +304,18 @@ class PedalStrip(QFrame):
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self._color, self._callback = color, None
-        self.setFixedWidth(90)
-        self.setStyleSheet(f"background: {PANEL}; border-radius: 10px; border: 1px solid {BORDER};")
+        self.setFixedWidth(92)
+        self.setStyleSheet("background: transparent; border: none;")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 12); layout.setSpacing(6)
+        layout.setContentsMargins(8, 4, 8, 4); layout.setSpacing(8)
 
         lbl = QLabel(label.upper()); lbl.setFont(_font(10)); lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet(f"color: {color}; background: transparent; letter-spacing: 2px;")
         layout.addWidget(lbl)
 
-        self._pct = QLabel("0%"); self._pct.setFont(_font(16, bold=True))
+        self._pct = QLabel("0%"); self._pct.setFont(_font(15, bold=True))
         self._pct.setAlignment(Qt.AlignCenter)
-        self._pct.setStyleSheet("color: #444; background: transparent;")
+        self._pct.setStyleSheet(f"color: {TEXT_SUB}; background: transparent;")
         layout.addWidget(self._pct)
 
         self._slider = _VPedalSlider(color)
@@ -321,7 +326,7 @@ class PedalStrip(QFrame):
 
     def _on_change(self, val):
         self._pct.setText(f"{val}%")
-        self._pct.setStyleSheet(f"color: {self._color if val > 5 else '#444'}; background: transparent;")
+        self._pct.setStyleSheet(f"color: {self._color if val > 5 else TEXT_SUB}; background: transparent;")
         if self._callback: self._callback(float(val))
 
 
@@ -331,51 +336,45 @@ class BrakeButtonPanel(QFrame):
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self._color, self._callback = color, None
-        self.setFixedWidth(110)
-        self.setStyleSheet(f"background: {PANEL}; border-radius: 10px; border: 1px solid {BORDER};")
+        self.setFixedWidth(100)
+        self.setStyleSheet("background: transparent; border: none;")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 12, 10, 12); layout.setSpacing(10)
+        layout.setContentsMargins(8, 4, 8, 4); layout.setSpacing(8)
 
         lbl = QLabel(label.upper()); lbl.setFont(_font(10)); lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet(f"color: {color}; background: transparent; letter-spacing: 2px;")
         layout.addWidget(lbl)
 
-        self._pct = QLabel("0%"); self._pct.setFont(_font(16, bold=True))
-        self._pct.setAlignment(Qt.AlignCenter)
-        self._pct.setStyleSheet("color: #444; background: transparent;")
-        layout.addWidget(self._pct)
+        layout.addStretch()
 
         self._button = QPushButton("BRAKE")
-        self._button.setMinimumHeight(140)
+        self._button.setMinimumHeight(148)
         self._button.setFont(_font(16, True))
         self._button.setCursor(Qt.PointingHandCursor)
         self._button.setStyleSheet(self._button_style(False))
         self._button.pressed.connect(lambda: self._set_pressed(True))
         self._button.released.connect(lambda: self._set_pressed(False))
-        layout.addWidget(self._button, stretch=1)
+        layout.addWidget(self._button)
+        layout.addStretch()
 
     def set_callback(self, fn):
         self._callback = fn
 
     def _button_style(self, pressed: bool) -> str:
         fg = "#fff" if pressed else self._color
-        bg = f"{self._color}55" if pressed else "#111"
+        bg = f"{self._color}66" if pressed else SURFACE
         border = self._color
         return (
             "QPushButton{"
-            f"background:{bg};color:{fg};border:2px solid {border};border-radius:12px;"
+            f"background:{bg};color:{fg};border:2px solid {border};border-radius:18px;"
             "padding:12px;letter-spacing:2px;"
             "}"
-            f"QPushButton:hover{{background:{self._color}33;}}"
+            f"QPushButton:hover{{background:{self._color}22;}}"
             f"QPushButton:pressed{{background:{self._color}77;color:#fff;}}"
         )
 
     def _set_pressed(self, pressed: bool):
         val = 100.0 if pressed else 0.0
-        self._pct.setText(f"{int(val)}%")
-        self._pct.setStyleSheet(
-            f"color: {self._color if pressed else '#444'}; background: transparent;"
-        )
         self._button.setStyleSheet(self._button_style(pressed))
         if self._callback:
             self._callback(val)
@@ -397,14 +396,14 @@ class GapIcon(QWidget):
     def set_level(self, level: int, inactive: bool = False):
         self._level = max(1, min(3, level))
         self._inactive = inactive
-        self._color = QColor("#333" if inactive else DIST_CLR.get(level, "#EF9F27"))
+        self._color = QColor("#B0BAC7" if inactive else DIST_CLR.get(level, "#EF9F27"))
         self.update()
 
     def paintEvent(self, event):
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         cy, cw, ch = h / 2, 22, 14
-        gray = QColor("#333")
+        gray = QColor("#B0BAC7")
 
         car_l = gray if self._inactive else QColor("#888")
         car_r = gray if self._inactive else self._color
@@ -415,9 +414,9 @@ class GapIcon(QWidget):
         bw, bg = (gr - gl - 8) / 3, 4
         for i in range(3):
             if self._inactive:
-                c = QColor("#1a1a1a")
+                c = QColor("#E1E7EE")
             else:
-                c = self._color if (i + 1) <= self._level else QColor("#2a2a2a")
+                c = self._color if (i + 1) <= self._level else QColor("#D4DCE5")
             p.setPen(Qt.NoPen); p.setBrush(c)
             p.drawRoundedRect(QRectF(gl + i * (bw + bg), cy - 4, bw, 8), 3, 3)
         p.end()
@@ -439,10 +438,12 @@ class GapIcon(QWidget):
 #  Main Window
 # ═══════════════════════════════════════════════════════════════
 
-def _make_btn(text, key, callback, buttons, color="#1D9E75", small=False):
+def _make_btn(text, key, callback, buttons, color="#1D9E75", size="md"):
     btn = QPushButton(text)
-    btn.setFixedHeight(56 if small else 70)
-    btn.setFont(_font(14 if small else 17, bold=True))
+    _h = {"lg": 90, "md": 70, "sm": 52}
+    _fs = {"lg": 20, "md": 17, "sm": 14}
+    btn.setFixedHeight(_h.get(size, 70))
+    btn.setFont(_font(_fs.get(size, 17), bold=True))
     btn.setCursor(Qt.PointingHandCursor)
     btn.setStyleSheet(_btn_style(color))
     btn.clicked.connect(callback)
@@ -463,127 +464,192 @@ class HmiWindow(QMainWindow):
 
         central = QWidget()
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8); root.setSpacing(6)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
 
-        # Col 1: Brake
-        self.brake_strip = BrakeButtonPanel("brake", "#E24B4A")
-        self.brake_strip.set_callback(lambda v: (self.ctrl.set_brake(v), self._refresh()))
-        root.addWidget(self.brake_strip)
-
-        # Col 2: Left buttons
-        left = QVBoxLayout(); left.setSpacing(8); left.addStretch()
-        for txt, key, cb, clr in [
-            ("ACC", "acc_toggle", self.ctrl.toggle_acc, "#1D9E75"),
-            ("SET", "set", self.ctrl.press_set, "#1D9E75"),
-            ("RES", "res", self.ctrl.press_res, "#378ADD"),
-            ("CANCEL", "pause", self.ctrl.press_pause, "#EF9F27"),
-        ]:
-            left.addWidget(_make_btn(txt, key, lambda _, f=cb: (f(), self._refresh()), self.buttons, clr))
-        left.addStretch()
-        root.addLayout(left)
-
-        # Col 3: Content
-        content = QVBoxLayout(); content.setSpacing(8)
-
-        # Header
         hdr = QHBoxLayout()
-        t = QLabel("ACC"); t.setFont(_font(14, True)); t.setStyleSheet("color: #555; background: transparent; letter-spacing: 3px;")
+        t = QLabel("ACC"); t.setFont(_font(14, True)); t.setStyleSheet(f"color: {TEXT_SUB}; background: transparent; letter-spacing: 3px;")
         hdr.addWidget(t)
-        s = QLabel("adaptive cruise control · HMI"); s.setFont(_font(8)); s.setStyleSheet("color: #333; background: transparent;")
-        hdr.addWidget(s); hdr.addStretch()
-        content.addLayout(hdr)
+        s = QLabel("adaptive cruise control · driver cluster"); s.setFont(_font(8)); s.setStyleSheet(f"color: {TEXT_FAINT}; background: transparent;")
+        hdr.addWidget(s)
+        hdr.addStretch()
+        root.addLayout(hdr)
 
-        # Status panel
+        self.fault_banner = QLabel("FAULT ACTIVE  |  ACC unavailable until driver turns system OFF")
+        self.fault_banner.setFont(_font(11, True))
+        self.fault_banner.setAlignment(Qt.AlignCenter)
+        self.fault_banner.setStyleSheet(
+            "background:#FDECEC;color:#B42318;border:1px solid #F3B7B5;border-radius:10px;padding:10px 14px;"
+        )
+        self.fault_banner.hide()
+        root.addWidget(self.fault_banner)
+
         self.status_panel = QFrame()
         self.status_panel.setStyleSheet(
-            f"background: {PANEL}; border-radius: 10px; border: 1px solid {BORDER};"
+            f"background: {PANEL}; border-radius: 12px;"
         )
-        panel_layout = QVBoxLayout(self.status_panel)
-        panel_layout.setContentsMargins(18, 16, 18, 16)
-        panel_layout.setSpacing(14)
+        self.status_panel.setFixedHeight(96)
+        sp = QHBoxLayout(self.status_panel)
+        sp.setContentsMargins(24, 12, 24, 12)
+        sp.setSpacing(0)
 
-        title_row = QHBoxLayout()
-        self._panel_title = QLabel("STATUS")
-        self._panel_title.setFont(_font(12, True))
-        self._panel_title.setStyleSheet("color: #666; background: transparent; letter-spacing: 2px;")
-        title_row.addWidget(self._panel_title)
-        title_row.addStretch()
-        panel_layout.addLayout(title_row)
+        state_col = QVBoxLayout()
+        state_col.setSpacing(4)
+        state_col.addWidget(self._make_label("STATE", 8, TEXT_FAINT))
+        state_row = QHBoxLayout()
+        state_row.setSpacing(8)
+        self._hud_dot = QLabel()
+        self._hud_dot.setFixedSize(10, 10)
+        state_row.addWidget(self._hud_dot, alignment=Qt.AlignVCenter)
+        self._hud_state = QLabel("OFF")
+        self._hud_state.setFont(_font(22, True))
+        state_row.addWidget(self._hud_state)
+        self._hud_override = QLabel("OVERRIDE")
+        self._hud_override.setFont(_font(10, True))
+        self._hud_override.setStyleSheet("color: #C98A00; background: transparent;")
+        self._hud_override.hide()
+        state_row.addWidget(self._hud_override)
+        state_row.addStretch()
+        state_col.addLayout(state_row)
+        sp.addLayout(state_col, stretch=3)
 
-        hud_row = QHBoxLayout()
-        hud_row.setSpacing(20)
-        hud_row.addStretch()
+        v1 = QFrame(); v1.setFrameShape(QFrame.VLine)
+        v1.setStyleSheet(f"background: {BORDER};"); v1.setFixedWidth(1)
+        sp.addSpacing(20); sp.addWidget(v1); sp.addSpacing(20)
 
-        self._hud_dot = QLabel(); self._hud_dot.setFixedSize(14, 14)
-        hud_row.addWidget(self._hud_dot)
-        self._hud_state = QLabel("OFF"); self._hud_state.setFont(_font(22, True))
-        hud_row.addWidget(self._hud_state)
-        self._hud_override = QLabel("OVERRIDE"); self._hud_override.setFont(_font(14, True))
-        self._hud_override.setStyleSheet("color: #FFD060; background: transparent;"); self._hud_override.hide()
-        hud_row.addWidget(self._hud_override)
+        tgt_col = QVBoxLayout()
+        tgt_col.setSpacing(4)
+        tgt_col.addWidget(self._make_label("TARGET", 8, TEXT_FAINT))
+        self._hud_set = QLabel("— cm/s")
+        self._hud_set.setFont(_font(22, True))
+        tgt_col.addWidget(self._hud_set)
+        sp.addLayout(tgt_col, stretch=2)
 
-        for sep_text in ("│",):
-            sep = QLabel(sep_text); sep.setFont(_font(18)); sep.setStyleSheet("color: #666; background: transparent;")
-            hud_row.addWidget(sep)
-        self._hud_set = QLabel("SET —"); self._hud_set.setFont(_font(20, True))
-        hud_row.addWidget(self._hud_set)
-        sep2 = QLabel("│"); sep2.setFont(_font(18)); sep2.setStyleSheet("color: #666; background: transparent;")
-        hud_row.addWidget(sep2)
+        v2 = QFrame(); v2.setFrameShape(QFrame.VLine)
+        v2.setStyleSheet(f"background: {BORDER};"); v2.setFixedWidth(1)
+        sp.addSpacing(20); sp.addWidget(v2); sp.addSpacing(20)
 
-        self._hud_gap = GapIcon(); self._hud_gap.setAttribute(Qt.WA_TransparentForMouseEvents)
-        hud_row.addWidget(self._hud_gap)
-        self._hud_dist = QLabel(""); self._hud_dist.setFont(_font(18, True))
-        hud_row.addWidget(self._hud_dist)
-        self._hud_relspd = QLabel(""); self._hud_relspd.setFont(_font(16, True))
-        hud_row.addWidget(self._hud_relspd)
-        hud_row.addStretch()
-        panel_layout.addLayout(hud_row)
+        gap_col = QVBoxLayout()
+        gap_col.setSpacing(4)
+        gap_col.addWidget(self._make_label("GAP", 8, TEXT_FAINT))
+        gap_row = QHBoxLayout()
+        gap_row.setSpacing(8)
+        self._hud_gap = GapIcon()
+        self._hud_gap.setAttribute(Qt.WA_TransparentForMouseEvents)
+        gap_row.addWidget(self._hud_gap)
+        self._hud_dist = QLabel("")
+        self._hud_dist.setFont(_font(16, True))
+        gap_row.addWidget(self._hud_dist)
+        self._hud_relspd = QLabel("")
+        self._hud_relspd.setFont(_font(13))
+        gap_row.addWidget(self._hud_relspd)
+        gap_row.addStretch()
+        gap_col.addLayout(gap_row)
+        sp.addLayout(gap_col, stretch=3)
+        root.addWidget(self.status_panel)
 
-        self._status_hint = QLabel("카메라 입력 없이 ACC 상태와 전방 차량 시뮬레이션만 표시합니다.")
-        self._status_hint.setFont(_font(10))
-        self._status_hint.setAlignment(Qt.AlignCenter)
-        self._status_hint.setStyleSheet("color: #555; background: transparent;")
-        panel_layout.addWidget(self._status_hint)
-
-        content.addWidget(self.status_panel, stretch=4)
-
-        # Gauges
-        gr = QHBoxLayout(); gr.setSpacing(8)
+        gr = QHBoxLayout()
+        gr.setSpacing(8)
         for gauge_cls, attr in [(SpeedGauge, "gauge"), (PwmGauge, "pwm_gauge")]:
             frame = QFrame()
-            frame.setStyleSheet(f"background: {PANEL}; border-radius: 10px; border: 1px solid {BORDER};")
-            fl = QVBoxLayout(frame); fl.setContentsMargins(4, 4, 4, 4)
-            g = gauge_cls(); fl.addWidget(g); setattr(self, attr, g)
+            frame.setStyleSheet(f"background: {PANEL}; border-radius: 12px; border: 1px solid {BORDER};")
+            fl = QVBoxLayout(frame)
+            fl.setContentsMargins(4, 4, 4, 4)
+            g = gauge_cls()
+            fl.addWidget(g)
+            setattr(self, attr, g)
             gr.addWidget(frame, stretch=1)
-        content.addLayout(gr, stretch=3)
+        root.addLayout(gr, stretch=1)
 
-        # SIM row
-        sf = QFrame(); sf.setStyleSheet(f"background: {PANEL}; border-radius: 8px; border: 1px solid {BORDER};")
-        sl = QHBoxLayout(sf); sl.setContentsMargins(12, 6, 12, 6); sl.setSpacing(8)
-        sl.addWidget(self._make_label("SIM", 10, "#444"))
-        for txt, cb in [("차량", self._toggle_front), ("+SPD", self._spd_up), ("−SPD", self._spd_dn), ("FAULT", self.ctrl.trigger_fault)]:
-            b = QPushButton(txt); b.setFixedHeight(36); b.setFont(_font(11)); b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet("QPushButton{background:#111;color:#555;border:1px solid #2a2a2a;border-radius:6px;padding:0 14px}"
-                            "QPushButton:hover{color:#999;border-color:#444}QPushButton:pressed{background:#222}")
-            b.clicked.connect(lambda _, f=cb: (f(), self._refresh())); sl.addWidget(b)
-        sl.addStretch(); content.addWidget(sf)
-        root.addLayout(content, stretch=1)
+        bottom = QHBoxLayout()
+        bottom.setSpacing(10)
 
-        # Col 4: Right buttons
-        right = QVBoxLayout(); right.setSpacing(8); right.addStretch()
-        right.addWidget(_make_btn("SPD +", "speed_up", lambda: (self.ctrl.press_speed_up(), self._refresh()), self.buttons))
-        right.addWidget(_make_btn("SPD −", "speed_down", lambda: (self.ctrl.press_speed_down(), self._refresh()), self.buttons))
+        prim = QVBoxLayout()
+        prim.setSpacing(6)
+        prim.addWidget(self._make_label("PRIMARY", 8, TEXT_FAINT))
+        prim.addWidget(_make_btn("ACC", "acc_toggle",
+            lambda: (self.ctrl.toggle_acc(), self._refresh()), self.buttons, "#1D9E75", size="lg"))
+        prim.addWidget(_make_btn("CANCEL", "pause",
+            lambda: (self.ctrl.press_pause(), self._refresh()), self.buttons, "#EF9F27", size="md"))
+        bottom.addLayout(prim, stretch=2)
+
+        d1 = QFrame(); d1.setFrameShape(QFrame.VLine)
+        d1.setStyleSheet(f"background: {BORDER};"); d1.setFixedWidth(1)
+        bottom.addWidget(d1)
+
+        spd_zone = QVBoxLayout()
+        spd_zone.setSpacing(6)
+        spd_zone.addWidget(self._make_label("SPEED", 8, TEXT_FAINT))
+        spd_r1 = QHBoxLayout(); spd_r1.setSpacing(6)
+        spd_r1.addWidget(_make_btn("SPD +", "speed_up",
+            lambda: (self.ctrl.press_speed_up(), self._refresh()), self.buttons, "#1D9E75", size="md"))
+        spd_r1.addWidget(_make_btn("SPD -", "speed_down",
+            lambda: (self.ctrl.press_speed_down(), self._refresh()), self.buttons, "#1D9E75", size="md"))
+        spd_zone.addLayout(spd_r1)
+        spd_r2 = QHBoxLayout(); spd_r2.setSpacing(6)
+        spd_r2.addWidget(_make_btn("SET", "set",
+            lambda: (self.ctrl.press_set(), self._refresh()), self.buttons, "#1D9E75", size="md"))
+        spd_r2.addWidget(_make_btn("RES", "res",
+            lambda: (self.ctrl.press_res(), self._refresh()), self.buttons, "#378ADD", size="md"))
+        spd_zone.addLayout(spd_r2)
+        bottom.addLayout(spd_zone, stretch=3)
+
+        d2 = QFrame(); d2.setFrameShape(QFrame.VLine)
+        d2.setStyleSheet(f"background: {BORDER};"); d2.setFixedWidth(1)
+        bottom.addWidget(d2)
+
+        dist_zone = QVBoxLayout()
+        dist_zone.setSpacing(6)
+        dist_zone.addWidget(self._make_label("GAP", 8, TEXT_FAINT))
         for i in (1, 2, 3):
-            right.addWidget(_make_btn(f"D{i}", f"dist_{i}",
+            dist_zone.addWidget(_make_btn(
+                f"D{i}", f"dist_{i}",
                 (lambda lv: lambda: (self.ctrl.set_distance_level(lv), self._refresh()))(i),
-                self.buttons, "#378ADD", small=True))
-        right.addStretch(); root.addLayout(right)
+                self.buttons, "#378ADD", size="sm"
+            ))
+        bottom.addLayout(dist_zone, stretch=1)
 
-        # Col 5: Accel
+        d3 = QFrame(); d3.setFrameShape(QFrame.VLine)
+        d3.setStyleSheet(f"background: {BORDER};"); d3.setFixedWidth(1)
+        bottom.addWidget(d3)
+
+        pedal_zone = QVBoxLayout()
+        pedal_zone.setSpacing(6)
+        pedal_zone.addWidget(self._make_label("PEDAL", 8, TEXT_FAINT))
+        pedal_inner = QHBoxLayout()
+        pedal_inner.setSpacing(6)
+        self.brake_strip = BrakeButtonPanel("brake", "#E24B4A")
+        self.brake_strip.set_callback(lambda v: (self.ctrl.set_brake(v), self._refresh()))
+        pedal_inner.addWidget(self.brake_strip, stretch=1)
         self.throttle_strip = PedalStrip("accel", "#1D9E75")
         self.throttle_strip.set_callback(lambda v: (self.ctrl.set_accel(v), self._refresh()))
-        root.addWidget(self.throttle_strip)
+        pedal_inner.addWidget(self.throttle_strip, stretch=1)
+        pedal_zone.addLayout(pedal_inner, stretch=1)
+        bottom.addLayout(pedal_zone, stretch=2)
+
+        root.addLayout(bottom)
+
+        sf = QFrame()
+        sf.setStyleSheet(f"background: {PANEL}; border-radius: 8px; border: 1px solid {BORDER};")
+        sl = QHBoxLayout(sf)
+        sl.setContentsMargins(12, 6, 12, 6)
+        sl.setSpacing(8)
+        sl.addWidget(self._make_label("SIM", 10, TEXT_SUB))
+        for txt, cb in [("차량", self._toggle_front), ("+SPD", self._spd_up), ("-SPD", self._spd_dn), ("FAULT", self.ctrl.trigger_fault)]:
+            b = QPushButton(txt)
+            b.setFixedHeight(36)
+            b.setFont(_font(11))
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton{{background:{SURFACE_ALT};color:{TEXT_SUB};border:1px solid {BORDER};border-radius:6px;padding:0 14px}}"
+                f"QPushButton:hover{{color:{TEXT};border-color:#AEB8C4;background:#EEF3F8}}"
+                "QPushButton:pressed{background:#DDE5EE}"
+            )
+            b.clicked.connect(lambda _, f=cb: (f(), self._refresh()))
+            sl.addWidget(b)
+        sl.addStretch()
+        root.addWidget(sf)
 
         self._timer = QTimer(); self._timer.timeout.connect(self._refresh); self._timer.start(50)
         self._refresh()
@@ -592,6 +658,12 @@ class HmiWindow(QMainWindow):
     def _make_label(text, size, color):
         l = QLabel(text); l.setFont(_font(size)); l.setStyleSheet(f"color:{color};background:transparent;letter-spacing:1px;")
         return l
+
+    def _make_section_title(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setFont(_font(10, True))
+        lbl.setStyleSheet(f"color: {TEXT_SUB}; background: transparent; letter-spacing: 1px;")
+        return lbl
 
     # ── Events ──
 
@@ -614,8 +686,8 @@ class HmiWindow(QMainWindow):
             self.ctrl.set_front_vehicle(False, 0)
             self.ctrl.data.front_rel_speed_mps = 0.0
 
-    def _spd_up(self):  self.ctrl.data.current_speed_mps = round(self.ctrl.data.current_speed_mps + 0.1, 2)
-    def _spd_dn(self):  self.ctrl.data.current_speed_mps = max(0.0, round(self.ctrl.data.current_speed_mps - 0.1, 2))
+    def _spd_up(self):  self.ctrl.data.current_speed_mps = round(self.ctrl.data.current_speed_mps + 0.01, 2)
+    def _spd_dn(self):  self.ctrl.data.current_speed_mps = max(0.0, round(self.ctrl.data.current_speed_mps - 0.01, 2))
 
     # ── Refresh ──
 
@@ -625,7 +697,7 @@ class HmiWindow(QMainWindow):
         active = state in (AccState.CRUISING, AccState.FOLLOWING)
 
         # Gauges
-        self.gauge.set_value(d.current_speed_mps, state, f"SET {d.set_speed_mps:.2f} m/s")
+        self.gauge.set_value(d.current_speed_mps * 100.0, state, f"SET {d.set_speed_mps * 100.0:.0f} cm/s")
         pwm = min(100, max(0, (d.current_speed_mps / max(d.set_speed_mps, 0.01)) * 50)) if active else d.accel_pct
         self.pwm_gauge.set_value(pwm, state)
 
@@ -638,17 +710,18 @@ class HmiWindow(QMainWindow):
         override = d.brake_pct > 5 or d.accel_pct > 5
         self._hud_override.setVisible(override and state in (AccState.STANDBY, AccState.CRUISING, AccState.FOLLOWING))
 
-        self._hud_set.setText(f"SET {d.set_speed_mps:.2f} m/s" if active or state == AccState.STANDBY else "SET —")
-        self._hud_set.setStyleSheet(f"color:{'#3FFFB0' if active else '#888'};background:transparent;")
+        self._hud_set.setText(f"SET {d.set_speed_mps * 100.0:.0f} cm/s" if active or state == AccState.STANDBY else "SET —")
+        self._hud_set.setStyleSheet(f"color:{CLR[state] if active else TEXT_FAINT};background:transparent;")
 
         self._hud_gap.set_level(d.distance_level, inactive=(state == AccState.OFF))
+        self.fault_banner.setVisible(state == AccState.FAULT)
 
         if d.front_vehicle_detected:
             dm, rv = d.front_distance_mm / 1000.0, d.front_rel_speed_mps
             fc = "#FF6B6B" if dm < 0.3 else "#F0A030" if dm < 0.6 else "#3FFFB0"
-            rc = "#FF6B6B" if rv < -0.05 else "#3FFFB0" if rv > 0.05 else "#888"
+            rc = "#FF6B6B" if rv < -0.05 else "#1D9E75" if rv > 0.05 else TEXT_FAINT
             self._hud_dist.setText(f"{dm:.2f}m"); self._hud_dist.setStyleSheet(f"color:{fc};background:transparent;")
-            self._hud_relspd.setText(f"{'+' if rv > 0 else ''}{rv:.2f}m/s"); self._hud_relspd.setStyleSheet(f"color:{rc};background:transparent;")
+            self._hud_relspd.setText(f"{'+' if rv > 0 else ''}{rv * 100.0:.0f}cm/s"); self._hud_relspd.setStyleSheet(f"color:{rc};background:transparent;")
         else:
             self._hud_dist.setText(""); self._hud_relspd.setText("")
 
@@ -688,8 +761,8 @@ def main():
 
     pal = QPalette()
     for role, color in [
-        (QPalette.Window, BG), (QPalette.WindowText, "#e0e0e0"),
-        (QPalette.Base, "#0a0a0a"), (QPalette.Button, "#121212"), (QPalette.ButtonText, "#999"),
+        (QPalette.Window, BG), (QPalette.WindowText, TEXT),
+        (QPalette.Base, SURFACE), (QPalette.Button, SURFACE), (QPalette.ButtonText, TEXT),
     ]:
         pal.setColor(role, QColor(color))
     app.setPalette(pal)
