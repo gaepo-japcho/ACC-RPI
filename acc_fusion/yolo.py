@@ -40,6 +40,16 @@ class YOLODetector:
 
         return detections
 
+    @classmethod
+    def from_config(cls) -> "YOLODetector":
+        from .config import config
+        c = config["yolo"]
+        return cls(
+            model_path=c["model_path"],
+            conf_threshold=c["conf_threshold"],
+            device=c["device"],
+        )
+
     def draw(self, frame: np.ndarray, detections: list[dict]) -> np.ndarray:
         """감지 결과를 프레임에 시각화합니다."""
         for det in detections:

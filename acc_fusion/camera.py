@@ -68,6 +68,17 @@ class CameraReader:
     def __exit__(self, *_):
         self.close()
 
+    @classmethod
+    def from_config(cls) -> "CameraReader":
+        from .config import config
+        c = config["camera"]
+        return cls(
+            source=c["source"],
+            width=c["width"],
+            height=c["height"],
+            fps=c["fps"],
+        )
+
     @property
     def is_open(self) -> bool:
         return self._cap is not None and self._cap.isOpened()

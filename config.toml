@@ -1,0 +1,16 @@
+[camera]
+source = 0        # 카메라 인덱스 또는 파일 경로
+width = 640
+height = 480
+fps = 30
+
+[lidar]
+port = "/dev/ttyUSB0"
+baudrate = 115200
+angle_offset = 0.0   # 설치 방향 보정 (도)
+reverse = false      # 뒤집어 설치한 경우 true
+
+[yolo]
+model_path = "acc_fusion/yolo26n.pt"
+conf_threshold = 0.5
+device = "cpu"

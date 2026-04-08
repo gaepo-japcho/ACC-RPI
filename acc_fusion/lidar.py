@@ -82,6 +82,17 @@ class LidarReader:
     def __exit__(self, *_):
         self.close()
 
+    @classmethod
+    def from_config(cls) -> "LidarReader":
+        from .config import config
+        c = config["lidar"]
+        return cls(
+            port=c["port"],
+            baudrate=c["baudrate"],
+            angle_offset=c["angle_offset"],
+            reverse=c["reverse"],
+        )
+
     @property
     def is_open(self) -> bool:
         return self._lidar is not None
