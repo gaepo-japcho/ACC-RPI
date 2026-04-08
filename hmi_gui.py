@@ -325,6 +325,62 @@ class PedalStrip(QFrame):
         if self._callback: self._callback(float(val))
 
 
+class BrakeButtonPanel(QFrame):
+    """브레이크 입력용 버튼 패널. 누르는 동안만 100% 입력."""
+
+    def __init__(self, label: str, color: str, parent=None):
+        super().__init__(parent)
+        self._color, self._callback = color, None
+        self.setFixedWidth(110)
+        self.setStyleSheet(f"background: {PANEL}; border-radius: 10px; border: 1px solid {BORDER};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 12, 10, 12); layout.setSpacing(10)
+
+        lbl = QLabel(label.upper()); lbl.setFont(_font(10)); lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet(f"color: {color}; background: transparent; letter-spacing: 2px;")
+        layout.addWidget(lbl)
+
+        self._pct = QLabel("0%"); self._pct.setFont(_font(16, bold=True))
+        self._pct.setAlignment(Qt.AlignCenter)
+        self._pct.setStyleSheet("color: #444; background: transparent;")
+        layout.addWidget(self._pct)
+
+        self._button = QPushButton("BRAKE")
+        self._button.setMinimumHeight(140)
+        self._button.setFont(_font(16, True))
+        self._button.setCursor(Qt.PointingHandCursor)
+        self._button.setStyleSheet(self._button_style(False))
+        self._button.pressed.connect(lambda: self._set_pressed(True))
+        self._button.released.connect(lambda: self._set_pressed(False))
+        layout.addWidget(self._button, stretch=1)
+
+    def set_callback(self, fn):
+        self._callback = fn
+
+    def _button_style(self, pressed: bool) -> str:
+        fg = "#fff" if pressed else self._color
+        bg = f"{self._color}55" if pressed else "#111"
+        border = self._color
+        return (
+            "QPushButton{"
+            f"background:{bg};color:{fg};border:2px solid {border};border-radius:12px;"
+            "padding:12px;letter-spacing:2px;"
+            "}"
+            f"QPushButton:hover{{background:{self._color}33;}}"
+            f"QPushButton:pressed{{background:{self._color}77;color:#fff;}}"
+        )
+
+    def _set_pressed(self, pressed: bool):
+        val = 100.0 if pressed else 0.0
+        self._pct.setText(f"{int(val)}%")
+        self._pct.setStyleSheet(
+            f"color: {self._color if pressed else '#444'}; background: transparent;"
+        )
+        self._button.setStyleSheet(self._button_style(pressed))
+        if self._callback:
+            self._callback(val)
+
+
 # ═══════════════════════════════════════════════════════════════
 #  GAP Icon
 # ═══════════════════════════════════════════════════════════════
@@ -411,7 +467,7 @@ class HmiWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8); root.setSpacing(6)
 
         # Col 1: Brake
-        self.brake_strip = PedalStrip("brake", "#E24B4A")
+        self.brake_strip = BrakeButtonPanel("brake", "#E24B4A")
         self.brake_strip.set_callback(lambda v: (self.ctrl.set_brake(v), self._refresh()))
         root.addWidget(self.brake_strip)
 
