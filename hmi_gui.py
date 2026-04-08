@@ -3,7 +3,6 @@ ACC HMI GUI Application – PyQt5
 Ref: STK020, STK021, SYS018, SYS019, SYS029, SWR018, SWR019
 """
 import math
-import random
 import signal
 import sys
 
@@ -18,7 +17,6 @@ from PyQt5.QtGui import (
 )
 
 from acc_state import AccState, AccController
-from camera_view import CameraView
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -440,41 +438,59 @@ class HmiWindow(QMainWindow):
         hdr.addWidget(s); hdr.addStretch()
         content.addLayout(hdr)
 
-        # Camera + HUD
-        self.camera_view = CameraView()
-        self._hud = QFrame(self.camera_view)
-        self._hud.setStyleSheet("background: rgba(0,0,0,0.80);")
-        self._hud.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # Status panel
+        self.status_panel = QFrame()
+        self.status_panel.setStyleSheet(
+            f"background: {PANEL}; border-radius: 10px; border: 1px solid {BORDER};"
+        )
+        panel_layout = QVBoxLayout(self.status_panel)
+        panel_layout.setContentsMargins(18, 16, 18, 16)
+        panel_layout.setSpacing(14)
 
-        hl = QHBoxLayout(self._hud); hl.setContentsMargins(0, 6, 0, 6); hl.setSpacing(0)
-        hl.addStretch()
-        hc = QHBoxLayout(); hc.setSpacing(20)
+        title_row = QHBoxLayout()
+        self._panel_title = QLabel("STATUS")
+        self._panel_title.setFont(_font(12, True))
+        self._panel_title.setStyleSheet("color: #666; background: transparent; letter-spacing: 2px;")
+        title_row.addWidget(self._panel_title)
+        title_row.addStretch()
+        panel_layout.addLayout(title_row)
+
+        hud_row = QHBoxLayout()
+        hud_row.setSpacing(20)
+        hud_row.addStretch()
 
         self._hud_dot = QLabel(); self._hud_dot.setFixedSize(14, 14)
-        hc.addWidget(self._hud_dot)
+        hud_row.addWidget(self._hud_dot)
         self._hud_state = QLabel("OFF"); self._hud_state.setFont(_font(22, True))
-        hc.addWidget(self._hud_state)
+        hud_row.addWidget(self._hud_state)
         self._hud_override = QLabel("OVERRIDE"); self._hud_override.setFont(_font(14, True))
         self._hud_override.setStyleSheet("color: #FFD060; background: transparent;"); self._hud_override.hide()
-        hc.addWidget(self._hud_override)
+        hud_row.addWidget(self._hud_override)
 
         for sep_text in ("│",):
             sep = QLabel(sep_text); sep.setFont(_font(18)); sep.setStyleSheet("color: #666; background: transparent;")
-            hc.addWidget(sep)
+            hud_row.addWidget(sep)
         self._hud_set = QLabel("SET —"); self._hud_set.setFont(_font(20, True))
-        hc.addWidget(self._hud_set)
+        hud_row.addWidget(self._hud_set)
         sep2 = QLabel("│"); sep2.setFont(_font(18)); sep2.setStyleSheet("color: #666; background: transparent;")
-        hc.addWidget(sep2)
+        hud_row.addWidget(sep2)
 
         self._hud_gap = GapIcon(); self._hud_gap.setAttribute(Qt.WA_TransparentForMouseEvents)
-        hc.addWidget(self._hud_gap)
+        hud_row.addWidget(self._hud_gap)
         self._hud_dist = QLabel(""); self._hud_dist.setFont(_font(18, True))
-        hc.addWidget(self._hud_dist)
+        hud_row.addWidget(self._hud_dist)
         self._hud_relspd = QLabel(""); self._hud_relspd.setFont(_font(16, True))
-        hc.addWidget(self._hud_relspd)
+        hud_row.addWidget(self._hud_relspd)
+        hud_row.addStretch()
+        panel_layout.addLayout(hud_row)
 
-        hl.addLayout(hc); hl.addStretch()
-        content.addWidget(self.camera_view, stretch=4)
+        self._status_hint = QLabel("카메라 입력 없이 ACC 상태와 전방 차량 시뮬레이션만 표시합니다.")
+        self._status_hint.setFont(_font(10))
+        self._status_hint.setAlignment(Qt.AlignCenter)
+        self._status_hint.setStyleSheet("color: #555; background: transparent;")
+        panel_layout.addWidget(self._status_hint)
+
+        content.addWidget(self.status_panel, stretch=4)
 
         # Gauges
         gr = QHBoxLayout(); gr.setSpacing(8)
@@ -513,8 +529,6 @@ class HmiWindow(QMainWindow):
         self.throttle_strip.set_callback(lambda v: (self.ctrl.set_accel(v), self._refresh()))
         root.addWidget(self.throttle_strip)
 
-        # Connections
-        self.camera_view.set_vehicle_callback(self._on_camera)
         self._timer = QTimer(); self._timer.timeout.connect(self._refresh); self._timer.start(50)
         self._refresh()
 
@@ -532,25 +546,6 @@ class HmiWindow(QMainWindow):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if hasattr(self, '_hud'):
-            self._hud.setGeometry(0, 0, self.camera_view.width(), 56)
-
-    def closeEvent(self, e):
-        self.camera_view.stop(); super().closeEvent(e)
-
-    # ── Camera ──
-
-    def _on_camera(self, detected, bbox_area):
-        if self._sim_front_vehicle:
-            return
-        if detected and bbox_area > 0:
-            dist = max(200, min(5000, int(300_000 / max(bbox_area, 1))))
-            self.ctrl.set_front_vehicle(True, dist)
-            # TODO: LiDAR 거리 미분 + 자차속도 (SYS013). 현재 더미.
-            self.ctrl.data.front_rel_speed_mps = round(random.uniform(-0.3, 0.1), 2)
-        else:
-            self.ctrl.set_front_vehicle(False, 0)
-            self.ctrl.data.front_rel_speed_mps = 0.0
 
     # ── SIM ──
 
@@ -600,9 +595,6 @@ class HmiWindow(QMainWindow):
             self._hud_relspd.setText(f"{'+' if rv > 0 else ''}{rv:.2f}m/s"); self._hud_relspd.setStyleSheet(f"color:{rc};background:transparent;")
         else:
             self._hud_dist.setText(""); self._hud_relspd.setText("")
-
-        self._hud.setGeometry(0, 0, self.camera_view.width(), 56)
-        self._hud.raise_()
 
         # Buttons
         avail = self.ctrl.get_button_availability()

@@ -67,7 +67,7 @@ if os.path.exists(best_pt):
     shutil.copy2(best_pt, dest_pt)
     print(f"\n학습 완료!")
     print(f"모델 저장: {dest_pt}")
-    print(f"\ncamera_view.py에서 모델을 변경하세요:")
-    print(f'  model_name="rc_car_best.pt"')
+    print("\n현재 앱에서는 카메라 추론을 사용하지 않습니다.")
+    print("필요하면 이후 카메라 입력 기능을 다시 연결해 모델 경로를 반영하세요.")
 else:
     print("학습 실패 - best.pt를 찾을 수 없습니다")
