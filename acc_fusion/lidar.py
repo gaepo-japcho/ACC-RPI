@@ -36,7 +36,9 @@ class LidarReader(metaclass=Singleton):
         self._scan_id = 0
 
     def _to_array(self, scan) -> np.ndarray:
-        return np.array([[angle, distance] for _, angle, distance in scan], dtype=np.float32)
+        return np.array(
+            [[angle, distance] for _, angle, distance in scan], dtype=np.float32
+        )
 
     def _apply_transform(self, arr: np.ndarray) -> np.ndarray:
         angles = arr[:, 0].copy()
@@ -86,6 +88,7 @@ class LidarReader(metaclass=Singleton):
     @classmethod
     def from_config(cls) -> "LidarReader":
         from .config import config
+
         c = config["lidar"]
         return cls(
             port=c["port"],

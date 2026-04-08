@@ -13,7 +13,9 @@ def main():
                 print("프레임을 읽을 수 없습니다.")
                 break
 
-            print(f"frame_id={frame.frame_id} ts={frame.timestamp:.3f} shape={frame.image.shape}")
+            print(
+                f"frame_id={frame.frame_id} ts={frame.timestamp:.3f} shape={frame.image.shape}"
+            )
 
             cv2.imshow("Camera Test", frame.image)
 

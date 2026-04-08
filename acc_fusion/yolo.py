@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+
 class YOLODetector:
     def __init__(self, model_path="yolo26n.pt", conf_threshold=0.5, device="cpu"):
         self.model = YOLO(model_path)
@@ -20,7 +21,9 @@ class YOLODetector:
                 - bbox (tuple): (x1, y1, x2, y2)
                 - center (tuple): (cx, cy)
         """
-        results = self.model(frame, conf=self.conf_threshold, device=self.device, verbose=False)
+        results = self.model(
+            frame, conf=self.conf_threshold, device=self.device, verbose=False
+        )
         detections = []
 
         for result in results:
@@ -30,19 +33,22 @@ class YOLODetector:
                 confidence = float(box.conf[0])
                 class_name = self.model.names[class_id]
 
-                detections.append({
-                    "class_id": class_id,
-                    "class_name": class_name,
-                    "confidence": confidence,
-                    "bbox": (x1, y1, x2, y2),
-                    "center": ((x1 + x2) // 2, (y1 + y2) // 2),
-                })
+                detections.append(
+                    {
+                        "class_id": class_id,
+                        "class_name": class_name,
+                        "confidence": confidence,
+                        "bbox": (x1, y1, x2, y2),
+                        "center": ((x1 + x2) // 2, (y1 + y2) // 2),
+                    }
+                )
 
         return detections
 
     @classmethod
     def from_config(cls) -> "YOLODetector":
         from .config import config
+
         c = config["yolo"]
         return cls(
             model_path=c["model_path"],
@@ -58,8 +64,13 @@ class YOLODetector:
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(
-                frame, label, (x1, y1 - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
+                frame,
+                label,
+                (x1, y1 - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
             )
 
         return frame

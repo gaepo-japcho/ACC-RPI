@@ -13,7 +13,6 @@ _VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 _FRONT_ANGLE_DEG = 30  # 전방으로 인정할 좌우 범위 (±30°)
 
 
-
 class Fusion(metaclass=Singleton):
     def __init__(self):
         from .camera import CameraReader
