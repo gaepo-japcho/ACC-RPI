@@ -1,0 +1,29 @@
+# YOLO models & training artifacts
+*.pt
+training/images/
+training/labels/
+training/runs/
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# AI
+.claude/
