@@ -53,7 +53,7 @@ class YOLODetector:
 
     @classmethod
     def from_config(cls) -> "YOLODetector":
-        from .config import config
+        from common import config
 
         c = config["yolo"]
         return cls(

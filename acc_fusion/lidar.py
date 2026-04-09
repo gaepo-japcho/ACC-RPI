@@ -96,7 +96,7 @@ class LidarReader(metaclass=Singleton):
 
     @classmethod
     def from_config(cls) -> "LidarReader":
-        from .config import config
+        from common import config
 
         c = config["lidar"]
         return cls(

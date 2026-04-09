@@ -78,7 +78,7 @@ class CameraReader(metaclass=Singleton):
 
     @classmethod
     def from_config(cls) -> "CameraReader":
-        from .config import config
+        from common import config
 
         c = config["camera"]
         return cls(
