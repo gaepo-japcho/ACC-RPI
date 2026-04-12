@@ -29,6 +29,7 @@ import threading # 여러개 동시에 실행 (TX, RX, HB)
 import time
 import logging
 from typing import Optional
+from interfaces.acc_status import AccStatus
 
 try:
     import can
@@ -50,13 +51,6 @@ GUI_REFRESH_MS          = 50      # HMI 폴링 주기 (참고용)
 
 # ── Heartbeat 타임아웃 ────────────────────────────────────────────────────────
 HB_TIMEOUT_SEC          = 0.15    # 150ms: 3주기(50ms) 미수신 시 False
-
-# ── ACC 상태 enum ─────────────────────────────────────────────────────────────
-ACC_STATUS_OFF          = 0
-ACC_STATUS_STANDBY      = 1
-ACC_STATUS_CRUISING     = 2
-ACC_STATUS_FOLLOWING    = 3
-ACC_STATUS_FAULT        = 4
 
 
 class CanInterface:
@@ -111,7 +105,7 @@ class CanInterface:
 
         # ── RX 버퍼 ──────────────────────────────────────────────────────────
         self._acc_state = {
-            "status":         ACC_STATUS_OFF,
+            "status":         AccStatus.OFF.value,
             "set_speed":      0,
             "distance_level": 3,
         }
@@ -422,7 +416,7 @@ class CanInterface:
                 elif msg.arbitration_id == MSG_ID_ECU_HEARTBEAT:
                     self._parse_ecu_heartbeat(msg.data)
             except Exception as e:
-                logger.error(f"CAN RX error: {e}") 
+                logger.error(f"CAN RX error: {e}")
 
     def _parse_acc_status(self, data: bytes) -> None:
         """
