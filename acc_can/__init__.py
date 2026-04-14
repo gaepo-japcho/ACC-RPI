@@ -9,14 +9,15 @@ ACC Project - Raspberry Pi CAN Interface Module
 
 CAN 메시지 주기/타임아웃 (SWR 기준):
   TX (Raspi → ECU):
-    0x100 RASPI_ACC_CMD   : 버튼/페달/ACC설정  20ms  (SWR020: 버튼 CAN 전송)
-    0x110 RASPI_SENSOR    : Fusion 데이터      20ms  (SWR013: 수신 주기 20ms)
+    0x100 SENSOR_ACC_CMD   : 버튼/페달/ACC설정  20ms  (SWR020: 버튼 CAN 전송)
+    0x110 SENSOR_FUSION    : Fusion 데이터      20ms  (SWR013: 수신 주기 20ms)
+    0x111 SENSOR_HEARTBEAT : Sensor HB/ERR      20ms  (SWR013: 수신 주기 20ms)
   RX (ECU → Raspi):
     0x400 ECU_ACC_STATUS  : ACC 상태 피드백    50ms  (SWR018: GUI 갱신 50ms)
     0x410 ECU_HEARTBEAT   : ECU HB/ERR        —     (타임아웃 150ms = 3주기)
 
 타임아웃:
-  RASPI_SENSOR 미갱신 60ms → ERR_SENSOR 설정  (SWR013: 타임아웃 60ms)
+  SENSOR_FUSION 미갱신 60ms → ERR_SENSOR 설정  (SWR013: 타임아웃 60ms)
   ECU_HEARTBEAT 미수신 150ms → heartbeat_ok=False
 
 관련 요구사항: SYS030, SYS031, SWR013, SWR018, SWR019, SWR020, SWR030
@@ -48,15 +49,16 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ── CAN Message IDs (DBC 기준) ──────────────────────────────────────────────
-MSG_ID_RASPI_ACC_CMD = 0x100  # Raspi → ECU: 버튼/페달/설정
-MSG_ID_RASPI_SENSOR = 0x110  # Raspi → ECU: Fusion 데이터
+MSG_ID_SENSOR_ACC_CMD = 0x100  # Raspi → ECU: 버튼/페달/설정
+MSG_ID_SENSOR_FUSION = 0x110  # Raspi → ECU: Fusion 데이터
+MSG_ID_SENSOR_HEARTBEAT = 0x111  # Raspi → ECU: Sensor HB/ERR
 MSG_ID_ECU_ACC_STATUS = (
-    0x400  # ECU → Raspi: ACC 상태 -> 왜 여기에 raspi HB/ERR이 포함되어있지?
+    0x400  # ECU → Raspi: ACC 상태
 )
 MSG_ID_ECU_HEARTBEAT = 0x410  # ECU → Raspi: Heartbeat/ERR
 
 # ── TX 주기 (ms) ─────────────────────────────────────────────────────────────
-TX_PERIOD_MS = 20  # RASPI_ACC_CMD, RASPI_SENSOR 송신 주기
+TX_PERIOD_MS = 20  # SENSOR_ACC_CMD, SENSOR_FUSION 송신 주기
 GUI_REFRESH_MS = 50  # HMI 폴링 주기 (참고용)
 
 # ── Heartbeat 타임아웃 ────────────────────────────────────────────────────────
@@ -130,6 +132,7 @@ class CanInterface:
         )
 
         self._hb_last_rx = 0.0  # 마지막 HB 수신 시각
+        self._hb_sensor_counter = 0
 
         # ── 스레드 ────────────────────────────────────────────────────────────
         self._tx_thread: Optional[threading.Thread] = None
@@ -324,13 +327,14 @@ class CanInterface:
     # =========================================================================
 
     def _tx_loop(self) -> None:
-        """20ms 주기로 RASPI_ACC_CMD, RASPI_SENSOR 송신."""
+        """20ms 주기로 SENSOR_ACC_CMD, SENSOR_FUSION 송신."""
         period = TX_PERIOD_MS / 1000.0  # s -> ms
         while self._running:
             t_start = time.monotonic()  # 루프 시작 시각 (정확한 주기 유지용)
 
             self._tx_acc_cmd()
-            self._tx_sensor()
+            self._tx_sensor_fusion()
+            self._tx_sensor_heartbeat()
 
             elapsed = time.monotonic() - t_start
             sleep_time = period - elapsed
@@ -338,7 +342,7 @@ class CanInterface:
                 time.sleep(sleep_time)  # 주기 맞추기 용으로 남은 시간만큼 슬립
 
     def _tx_acc_cmd(self) -> None:
-        """0x100 RASPI_ACC_CMD 송신."""
+        """0x100 SENSOR_ACC_CMD 송신."""
         with self._lock:
             btn_off = int(self._button_input.btn_acc_off)
             btn_set = int(self._button_input.btn_acc_set)
@@ -381,39 +385,36 @@ class CanInterface:
                 0x00,  # 뒤 4바이트는 예약 (0x00) (CAN 메세지가 최대 8바이트라서)
             ]
         )
-        self._send_raw(MSG_ID_RASPI_ACC_CMD, data)
+        self._send_raw(MSG_ID_SENSOR_ACC_CMD, data)
 
-    def _tx_sensor(self) -> None:
-        """0x110 RASPI_SENSOR 송신. Fusion 100ms 미갱신 시 ERR_SENSOR 설정."""
+    def _tx_sensor_fusion(self) -> None:
+        """0x110 SENSOR_FUSION 송신. VEH_DET, VEH_DIST만."""
         with self._lock:
             detected = int(self._fusion_data.detected)
             distance = self._fusion_data.distance
+
+        data = bytes([
+            detected & 0x01,
+            distance & 0xFF,
+        ])
+        self._send_raw(MSG_ID_SENSOR_FUSION, data)
+
+    def _tx_sensor_heartbeat(self) -> None:
+        """0x111 SENSOR_HEARTBEAT 송신. HB_SENSOR, ERR_SENSOR."""
+        with self._lock:
             last_upd = self._fusion_last_update
 
         now = time.time()
         err_sensor = (
             0x01 if (now - last_upd > 0.06 and last_upd != 0.0) else 0x00
-        )  # SWR013: 60ms 타임아웃
-
-        # HB_SENSOR: 0~255 카운터 (매 TX마다 +1 wrap)
-        if not hasattr(self, "_hb_sensor_counter"):
-            self._hb_sensor_counter = 0
+        )
         self._hb_sensor_counter = (self._hb_sensor_counter + 1) % 256
 
-        # ── 패킹 (DBC 0x110, 4 bytes) ────────────────────────────────────────
-        # Byte 0: VEH_DET [0|1]
-        # Byte 1: VEH_DIST [8|8] cm uint8
-        # Byte 2: HB_SENSOR [16|8]
-        # Byte 3: ERR_SENSOR [24|8]
-        data = bytes(
-            [
-                detected & 0x01,
-                distance & 0xFF,
-                self._hb_sensor_counter,
-                err_sensor & 0xFF,
-            ]
-        )
-        self._send_raw(MSG_ID_RASPI_SENSOR, data)
+        data = bytes([
+            self._hb_sensor_counter,
+            err_sensor & 0xFF,
+        ])
+        self._send_raw(MSG_ID_SENSOR_HEARTBEAT, data)
 
     # =========================================================================
     # 내부: RX 루프
