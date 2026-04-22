@@ -1,13 +1,19 @@
 """
 ACC HMI GUI Application – PyQt5
-Ref: STK020, STK021, SYS018, SYS019, SYS029, SWR018, SWR019
+
+데이터 소스:
+  - acc_can.CanInterface 로부터 `AccInfo`, `VehicleInfo`, `EcuStatus` 를 50ms 주기로 폴링해 렌더링.
+  - 버튼 클릭 / 페달 입력은 `send_button_input / send_acc_setting / send_pedal_input` 으로 즉시 전달.
+  - 로컬 상태머신은 두지 않는다. (상태 소유자는 acc_can.)
+
+Ref: STK020, STK021, SYS018, SYS019, SYS029, SWR018, SWR019, SWR028
 """
 import math
 import signal
 import sys
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
@@ -16,7 +22,16 @@ from PyQt5.QtGui import (
     QConicalGradient,
 )
 
-from acc_state import AccState, AccController
+from interfaces.acc_status import AccStatus
+from interfaces.button_input import ButtonInput
+from interfaces.pedal_input import PedalInput
+from interfaces.acc_setting import AccSetting
+
+from acc_hmi.acc_state import (
+    ACTIVE_STATUSES, BUTTON_AVAILABILITY,
+    MIN_SET_SPEED_CMS, SPEED_INCREMENT_CMS, SPEED_GAUGE_MAX_CMS,
+    DEFAULT_DISTANCE_LEVEL, status_from_int,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -32,30 +47,27 @@ TEXT_FAINT = "#8A95A3"
 SURFACE = "#FFFFFF"
 SURFACE_ALT = "#EEF3F8"
 
-# 패널/게이지용 일반 색상
 CLR = {
-    AccState.OFF:       "#5F5E5A",
-    AccState.STANDBY:   "#BA7517",
-    AccState.CRUISING:  "#1D9E75",
-    AccState.FOLLOWING: "#378ADD",
-    AccState.FAULT:     "#E24B4A",
+    AccStatus.OFF:       "#5F5E5A",
+    AccStatus.STANDBY:   "#BA7517",
+    AccStatus.CRUISING:  "#1D9E75",
+    AccStatus.FOLLOWING: "#378ADD",
+    AccStatus.FAULT:     "#E24B4A",
 }
-# HUD 오버레이용 밝은 색상
 CLR_HUD = {
-    AccState.OFF:       "#9E9D99",
-    AccState.STANDBY:   "#F0A030",
-    AccState.CRUISING:  "#3FFFB0",
-    AccState.FOLLOWING: "#60B8FF",
-    AccState.FAULT:     "#FF6B6B",
+    AccStatus.OFF:       "#9E9D99",
+    AccStatus.STANDBY:   "#F0A030",
+    AccStatus.CRUISING:  "#3FFFB0",
+    AccStatus.FOLLOWING: "#60B8FF",
+    AccStatus.FAULT:     "#FF6B6B",
 }
 STATE_TEXT = {
-    AccState.OFF: "OFF", AccState.STANDBY: "STANDBY",
-    AccState.CRUISING: "CRUISING", AccState.FOLLOWING: "FOLLOWING",
-    AccState.FAULT: "FAULT",
+    AccStatus.OFF: "OFF", AccStatus.STANDBY: "STANDBY",
+    AccStatus.CRUISING: "CRUISING", AccStatus.FOLLOWING: "FOLLOWING",
+    AccStatus.FAULT: "FAULT",
 }
 DIST_CLR = {1: "#E24B4A", 2: "#EF9F27", 3: "#1D9E75"}
 
-# 버튼 기본 스타일
 _BTN_BASE = (
     f"background: {SURFACE}; color: {TEXT_SUB}; border: 1px solid {BORDER};"
     "border-radius: 10px; padding: 0 28px; letter-spacing: 1px;"
@@ -71,7 +83,6 @@ def _font(size: int = 10, bold: bool = False) -> QFont:
 
 
 def _btn_style(color: str) -> str:
-    """기본 버튼 스타일시트 생성."""
     return f"""
         QPushButton {{ {_BTN_BASE} }}
         QPushButton:hover {{ border-color: {color}; color: {color}; background: {color}12; }}
@@ -81,7 +92,6 @@ def _btn_style(color: str) -> str:
 
 
 def _btn_active_style(color: str) -> str:
-    """활성 상태 버튼 스타일시트."""
     return f"""
         QPushButton {{
             background: {color}16; color: {color};
@@ -95,12 +105,10 @@ def _btn_active_style(color: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Arc Gauge (공통 베이스)
+#  Arc Gauge
 # ═══════════════════════════════════════════════════════════════
 
 class _ArcGauge(QWidget):
-    """아크형 게이지 공통 베이스. 서브클래스에서 max_val, unit, gradient 색상 지정."""
-
     max_val: float = 100.0
     unit: str = "%"
     label_fmt: str = "{:.0f}"
@@ -109,12 +117,12 @@ class _ArcGauge(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._value = 0.0
-        self._state = AccState.OFF
-        self._extra_text = ""  # 게이지 아래 추가 텍스트 (예: SET 속도)
+        self._state = AccStatus.OFF
+        self._extra_text = ""
         self.setMinimumSize(220, 200)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def set_value(self, value: float, state: AccState = AccState.OFF, extra: str = ""):
+    def set_value(self, value: float, state: AccStatus = AccStatus.OFF, extra: str = ""):
         self._value = max(0.0, min(value, self.max_val))
         self._state = state
         self._extra_text = extra
@@ -136,11 +144,9 @@ class _ArcGauge(QWidget):
 
         rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)
 
-        # Background arc
         p.setPen(QPen(QColor("#D7DEE8"), arc_w, Qt.SolidLine, Qt.RoundCap))
         p.drawArc(rect, int(v2a(self.max_val) * 16), int(span * 16))
 
-        # Filled arc
         if self._value > 0.001:
             grad = QConicalGradient(cx, cy, sa)
             for i, c in enumerate(self.grad_colors):
@@ -148,7 +154,6 @@ class _ArcGauge(QWidget):
             p.setPen(QPen(QBrush(grad), arc_w, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(rect, int(sa * 16), int(-(self._value / self.max_val) * span * 16))
 
-        # Ticks
         for i in range(21):
             frac = i / 20
             val = frac * self.max_val
@@ -175,7 +180,6 @@ class _ArcGauge(QWidget):
                 p.drawText(QRectF(lx - tr, ly - tr / 2, tr * 2, tr), Qt.AlignCenter,
                            self._format_tick(val))
 
-        # Needle
         na = math.radians(v2a(self._value))
         nlen = r * 0.68
         frac_s = self._value / self.max_val
@@ -187,13 +191,11 @@ class _ArcGauge(QWidget):
         p.setPen(QPen(nc, 3, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(cx, cy), QPointF(cx + math.cos(na) * nlen, cy - math.sin(na) * nlen))
 
-        # Hub
         p.setPen(QPen(nc, 2)); p.setBrush(QColor(SURFACE))
         p.drawEllipse(QPointF(cx, cy), 8, 8)
         p.setPen(Qt.NoPen); p.setBrush(nc)
         p.drawEllipse(QPointF(cx, cy), 3, 3)
 
-        # Digital readout
         tw = r * 1.2
         text_y = cy + r * 0.18
         fs_main = max(10, min(36, int(r * 0.28)))
@@ -221,7 +223,7 @@ class _ArcGauge(QWidget):
 
 
 class SpeedGauge(_ArcGauge):
-    max_val = 200.0
+    max_val = float(SPEED_GAUGE_MAX_CMS)
     unit = "cm/s"
     label_fmt = "{:.0f}"
     grad_colors = ("#1D9E75", "#EF9F27", "#E24B4A")
@@ -241,11 +243,11 @@ class PwmGauge(_ArcGauge):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Custom Vertical Pedal Slider
+#  Pedal Widgets
 # ═══════════════════════════════════════════════════════════════
 
 class _VPedalSlider(QWidget):
-    """QPainter 세로 슬라이더. 위=100%, 아래=0%."""
+    """세로 슬라이더. 위=100%, 아래=0%."""
     valueChanged = pyqtSignal(int)
     GROOVE_W, HANDLE_D, MARGIN = 36, 44, 22
 
@@ -300,7 +302,7 @@ class _VPedalSlider(QWidget):
 
 
 class PedalStrip(QFrame):
-    """세로 페달 스트립 – 화면 양쪽 가장자리 배치."""
+    """세로 슬라이더 페달 (액셀용)."""
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self._color, self._callback = color, None
@@ -327,16 +329,16 @@ class PedalStrip(QFrame):
     def _on_change(self, val):
         self._pct.setText(f"{val}%")
         self._pct.setStyleSheet(f"color: {self._color if val > 5 else TEXT_SUB}; background: transparent;")
-        if self._callback: self._callback(float(val))
+        if self._callback: self._callback(int(val))
 
 
 class BrakeButtonPanel(QFrame):
-    """브레이크 입력용 버튼 패널. 누르는 동안만 100% 입력."""
+    """브레이크 입력 버튼. 누르는 동안만 True. SYS018 디지털 ON/OFF."""
 
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self._color, self._callback = color, None
-        self.setFixedWidth(100)
+        self.setMinimumWidth(120)
         self.setStyleSheet("background: transparent; border: none;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4); layout.setSpacing(8)
@@ -349,7 +351,7 @@ class BrakeButtonPanel(QFrame):
 
         self._button = QPushButton("BRAKE")
         self._button.setMinimumHeight(148)
-        self._button.setFont(_font(16, True))
+        self._button.setFont(_font(14, True))
         self._button.setCursor(Qt.PointingHandCursor)
         self._button.setStyleSheet(self._button_style(False))
         self._button.pressed.connect(lambda: self._set_pressed(True))
@@ -367,17 +369,16 @@ class BrakeButtonPanel(QFrame):
         return (
             "QPushButton{"
             f"background:{bg};color:{fg};border:2px solid {border};border-radius:18px;"
-            "padding:12px;letter-spacing:2px;"
+            "padding:8px 4px;letter-spacing:1px;"
             "}"
             f"QPushButton:hover{{background:{self._color}22;}}"
             f"QPushButton:pressed{{background:{self._color}77;color:#fff;}}"
         )
 
     def _set_pressed(self, pressed: bool):
-        val = 100.0 if pressed else 0.0
         self._button.setStyleSheet(self._button_style(pressed))
         if self._callback:
-            self._callback(val)
+            self._callback(pressed)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -452,12 +453,23 @@ def _make_btn(text, key, callback, buttons, color="#1D9E75", size="md"):
 
 
 class HmiWindow(QMainWindow):
+    """
+    HMI 메인 윈도우. `CanInterface` 인스턴스를 주입받아 상태 폴링/입력 송신만 담당.
 
-    def __init__(self):
+    폴링 주기: 50ms (SWR018 "HMI 갱신 50ms").
+    """
+
+    def __init__(self, can_interface):
         super().__init__()
-        self.ctrl = AccController()
+        self._can = can_interface
         self.buttons: dict[str, QPushButton] = {}
-        self._sim_front_vehicle = False
+
+        # 로컬에 유지하는 입력 중간상태 — 운전자 조작 즉시 피드백용
+        self._brake_pressed = False
+        self._accel_pwm = 0
+        # ECU 가 아직 알려주지 않았을 때 send_acc_setting 에서 쓸 로컬 캐시
+        self._last_set_speed = 0
+        self._last_distance_level = DEFAULT_DISTANCE_LEVEL
 
         self.setWindowTitle("ACC HMI")
         self.setStyleSheet(f"background-color: {BG};")
@@ -468,15 +480,23 @@ class HmiWindow(QMainWindow):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
+        # ── Header ──
         hdr = QHBoxLayout()
-        t = QLabel("ACC"); t.setFont(_font(14, True)); t.setStyleSheet(f"color: {TEXT_SUB}; background: transparent; letter-spacing: 3px;")
+        t = QLabel("ACC"); t.setFont(_font(14, True))
+        t.setStyleSheet(f"color: {TEXT_SUB}; background: transparent; letter-spacing: 3px;")
         hdr.addWidget(t)
-        s = QLabel("adaptive cruise control · driver cluster"); s.setFont(_font(8)); s.setStyleSheet(f"color: {TEXT_FAINT}; background: transparent;")
+        s = QLabel("adaptive cruise control · driver cluster"); s.setFont(_font(8))
+        s.setStyleSheet(f"color: {TEXT_FAINT}; background: transparent;")
         hdr.addWidget(s)
         hdr.addStretch()
+        self._hud_link = QLabel("● CAN")
+        self._hud_link.setFont(_font(9, True))
+        self._hud_link.setStyleSheet(f"color: {TEXT_FAINT}; background: transparent;")
+        hdr.addWidget(self._hud_link)
         root.addLayout(hdr)
 
-        self.fault_banner = QLabel("FAULT ACTIVE  |  ACC unavailable until driver turns system OFF")
+        # ── FAULT Banner ──
+        self.fault_banner = QLabel("FAULT")
         self.fault_banner.setFont(_font(11, True))
         self.fault_banner.setAlignment(Qt.AlignCenter)
         self.fault_banner.setStyleSheet(
@@ -485,28 +505,22 @@ class HmiWindow(QMainWindow):
         self.fault_banner.hide()
         root.addWidget(self.fault_banner)
 
+        # ── Status Panel (상태 / TARGET / GAP) ──
         self.status_panel = QFrame()
-        self.status_panel.setStyleSheet(
-            f"background: {PANEL}; border-radius: 12px;"
-        )
+        self.status_panel.setStyleSheet(f"background: {PANEL}; border-radius: 12px;")
         self.status_panel.setFixedHeight(96)
         sp = QHBoxLayout(self.status_panel)
         sp.setContentsMargins(24, 12, 24, 12)
         sp.setSpacing(0)
 
-        state_col = QVBoxLayout()
-        state_col.setSpacing(4)
+        state_col = QVBoxLayout(); state_col.setSpacing(4)
         state_col.addWidget(self._make_label("STATE", 8, TEXT_FAINT))
-        state_row = QHBoxLayout()
-        state_row.setSpacing(8)
-        self._hud_dot = QLabel()
-        self._hud_dot.setFixedSize(10, 10)
+        state_row = QHBoxLayout(); state_row.setSpacing(8)
+        self._hud_dot = QLabel(); self._hud_dot.setFixedSize(10, 10)
         state_row.addWidget(self._hud_dot, alignment=Qt.AlignVCenter)
-        self._hud_state = QLabel("OFF")
-        self._hud_state.setFont(_font(22, True))
+        self._hud_state = QLabel("OFF"); self._hud_state.setFont(_font(22, True))
         state_row.addWidget(self._hud_state)
-        self._hud_override = QLabel("OVERRIDE")
-        self._hud_override.setFont(_font(10, True))
+        self._hud_override = QLabel("OVERRIDE"); self._hud_override.setFont(_font(10, True))
         self._hud_override.setStyleSheet("color: #C98A00; background: transparent;")
         self._hud_override.hide()
         state_row.addWidget(self._hud_override)
@@ -514,245 +528,278 @@ class HmiWindow(QMainWindow):
         state_col.addLayout(state_row)
         sp.addLayout(state_col, stretch=3)
 
-        v1 = QFrame(); v1.setFrameShape(QFrame.VLine)
-        v1.setStyleSheet(f"background: {BORDER};"); v1.setFixedWidth(1)
-        sp.addSpacing(20); sp.addWidget(v1); sp.addSpacing(20)
+        sp.addSpacing(20); sp.addWidget(self._vline()); sp.addSpacing(20)
 
-        tgt_col = QVBoxLayout()
-        tgt_col.setSpacing(4)
+        tgt_col = QVBoxLayout(); tgt_col.setSpacing(4)
         tgt_col.addWidget(self._make_label("TARGET", 8, TEXT_FAINT))
-        self._hud_set = QLabel("— cm/s")
-        self._hud_set.setFont(_font(22, True))
+        self._hud_set = QLabel("— cm/s"); self._hud_set.setFont(_font(22, True))
         tgt_col.addWidget(self._hud_set)
         sp.addLayout(tgt_col, stretch=2)
 
-        v2 = QFrame(); v2.setFrameShape(QFrame.VLine)
-        v2.setStyleSheet(f"background: {BORDER};"); v2.setFixedWidth(1)
-        sp.addSpacing(20); sp.addWidget(v2); sp.addSpacing(20)
+        sp.addSpacing(20); sp.addWidget(self._vline()); sp.addSpacing(20)
 
-        gap_col = QVBoxLayout()
-        gap_col.setSpacing(4)
+        gap_col = QVBoxLayout(); gap_col.setSpacing(4)
         gap_col.addWidget(self._make_label("GAP", 8, TEXT_FAINT))
-        gap_row = QHBoxLayout()
-        gap_row.setSpacing(8)
-        self._hud_gap = GapIcon()
-        self._hud_gap.setAttribute(Qt.WA_TransparentForMouseEvents)
+        gap_row = QHBoxLayout(); gap_row.setSpacing(8)
+        self._hud_gap = GapIcon(); self._hud_gap.setAttribute(Qt.WA_TransparentForMouseEvents)
         gap_row.addWidget(self._hud_gap)
-        self._hud_dist = QLabel("")
-        self._hud_dist.setFont(_font(16, True))
-        gap_row.addWidget(self._hud_dist)
-        self._hud_relspd = QLabel("")
-        self._hud_relspd.setFont(_font(13))
-        gap_row.addWidget(self._hud_relspd)
         gap_row.addStretch()
         gap_col.addLayout(gap_row)
         sp.addLayout(gap_col, stretch=3)
         root.addWidget(self.status_panel)
 
-        gr = QHBoxLayout()
-        gr.setSpacing(8)
+        # ── Gauges ──
+        gr = QHBoxLayout(); gr.setSpacing(8)
         for gauge_cls, attr in [(SpeedGauge, "gauge"), (PwmGauge, "pwm_gauge")]:
             frame = QFrame()
             frame.setStyleSheet(f"background: {PANEL}; border-radius: 12px; border: 1px solid {BORDER};")
-            fl = QVBoxLayout(frame)
-            fl.setContentsMargins(4, 4, 4, 4)
-            g = gauge_cls()
-            fl.addWidget(g)
-            setattr(self, attr, g)
+            fl = QVBoxLayout(frame); fl.setContentsMargins(4, 4, 4, 4)
+            g = gauge_cls(); fl.addWidget(g); setattr(self, attr, g)
             gr.addWidget(frame, stretch=1)
         root.addLayout(gr, stretch=1)
 
-        bottom = QHBoxLayout()
-        bottom.setSpacing(10)
+        # ── Button Grid ──
+        bottom = QHBoxLayout(); bottom.setSpacing(10)
 
-        prim = QVBoxLayout()
-        prim.setSpacing(6)
+        prim = QVBoxLayout(); prim.setSpacing(6)
         prim.addWidget(self._make_label("PRIMARY", 8, TEXT_FAINT))
         prim.addWidget(_make_btn("ACC", "acc_toggle",
-            lambda: (self.ctrl.toggle_acc(), self._refresh()), self.buttons, "#1D9E75", size="lg"))
+            self._on_acc_toggle, self.buttons, "#1D9E75", size="lg"))
         prim.addWidget(_make_btn("CANCEL", "pause",
-            lambda: (self.ctrl.press_pause(), self._refresh()), self.buttons, "#EF9F27", size="md"))
+            self._on_cancel, self.buttons, "#EF9F27", size="md"))
         bottom.addLayout(prim, stretch=2)
+        bottom.addWidget(self._vline())
 
-        d1 = QFrame(); d1.setFrameShape(QFrame.VLine)
-        d1.setStyleSheet(f"background: {BORDER};"); d1.setFixedWidth(1)
-        bottom.addWidget(d1)
-
-        spd_zone = QVBoxLayout()
-        spd_zone.setSpacing(6)
+        spd_zone = QVBoxLayout(); spd_zone.setSpacing(6)
         spd_zone.addWidget(self._make_label("SPEED", 8, TEXT_FAINT))
         spd_r1 = QHBoxLayout(); spd_r1.setSpacing(6)
         spd_r1.addWidget(_make_btn("SPD +", "speed_up",
-            lambda: (self.ctrl.press_speed_up(), self._refresh()), self.buttons, "#1D9E75", size="md"))
+            self._on_speed_up, self.buttons, "#1D9E75", size="md"))
         spd_r1.addWidget(_make_btn("SPD -", "speed_down",
-            lambda: (self.ctrl.press_speed_down(), self._refresh()), self.buttons, "#1D9E75", size="md"))
+            self._on_speed_down, self.buttons, "#1D9E75", size="md"))
         spd_zone.addLayout(spd_r1)
         spd_r2 = QHBoxLayout(); spd_r2.setSpacing(6)
         spd_r2.addWidget(_make_btn("SET", "set",
-            lambda: (self.ctrl.press_set(), self._refresh()), self.buttons, "#1D9E75", size="md"))
+            self._on_set, self.buttons, "#1D9E75", size="md"))
         spd_r2.addWidget(_make_btn("RES", "res",
-            lambda: (self.ctrl.press_res(), self._refresh()), self.buttons, "#378ADD", size="md"))
+            self._on_res, self.buttons, "#378ADD", size="md"))
         spd_zone.addLayout(spd_r2)
         bottom.addLayout(spd_zone, stretch=3)
+        bottom.addWidget(self._vline())
 
-        d2 = QFrame(); d2.setFrameShape(QFrame.VLine)
-        d2.setStyleSheet(f"background: {BORDER};"); d2.setFixedWidth(1)
-        bottom.addWidget(d2)
-
-        dist_zone = QVBoxLayout()
-        dist_zone.setSpacing(6)
+        dist_zone = QVBoxLayout(); dist_zone.setSpacing(6)
         dist_zone.addWidget(self._make_label("GAP", 8, TEXT_FAINT))
         for i in (1, 2, 3):
             dist_zone.addWidget(_make_btn(
                 f"D{i}", f"dist_{i}",
-                (lambda lv: lambda: (self.ctrl.set_distance_level(lv), self._refresh()))(i),
-                self.buttons, "#378ADD", size="sm"
+                (lambda lv: lambda: self._on_distance(lv))(i),
+                self.buttons, "#378ADD", size="sm",
             ))
         bottom.addLayout(dist_zone, stretch=1)
+        bottom.addWidget(self._vline())
 
-        d3 = QFrame(); d3.setFrameShape(QFrame.VLine)
-        d3.setStyleSheet(f"background: {BORDER};"); d3.setFixedWidth(1)
-        bottom.addWidget(d3)
-
-        pedal_zone = QVBoxLayout()
-        pedal_zone.setSpacing(6)
+        pedal_zone = QVBoxLayout(); pedal_zone.setSpacing(6)
         pedal_zone.addWidget(self._make_label("PEDAL", 8, TEXT_FAINT))
-        pedal_inner = QHBoxLayout()
-        pedal_inner.setSpacing(6)
+        pedal_inner = QHBoxLayout(); pedal_inner.setSpacing(6)
         self.brake_strip = BrakeButtonPanel("brake", "#E24B4A")
-        self.brake_strip.set_callback(lambda v: (self.ctrl.set_brake(v), self._refresh()))
+        self.brake_strip.set_callback(self._on_brake)
         pedal_inner.addWidget(self.brake_strip, stretch=1)
         self.throttle_strip = PedalStrip("accel", "#1D9E75")
-        self.throttle_strip.set_callback(lambda v: (self.ctrl.set_accel(v), self._refresh()))
+        self.throttle_strip.set_callback(self._on_accel)
         pedal_inner.addWidget(self.throttle_strip, stretch=1)
         pedal_zone.addLayout(pedal_inner, stretch=1)
         bottom.addLayout(pedal_zone, stretch=2)
 
         root.addLayout(bottom)
 
-        sf = QFrame()
-        sf.setStyleSheet(f"background: {PANEL}; border-radius: 8px; border: 1px solid {BORDER};")
-        sl = QHBoxLayout(sf)
-        sl.setContentsMargins(12, 6, 12, 6)
-        sl.setSpacing(8)
-        sl.addWidget(self._make_label("SIM", 10, TEXT_SUB))
-        for txt, cb in [("차량", self._toggle_front), ("+SPD", self._spd_up), ("-SPD", self._spd_dn), ("FAULT", self.ctrl.trigger_fault)]:
-            b = QPushButton(txt)
-            b.setFixedHeight(36)
-            b.setFont(_font(11))
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(
-                f"QPushButton{{background:{SURFACE_ALT};color:{TEXT_SUB};border:1px solid {BORDER};border-radius:6px;padding:0 14px}}"
-                f"QPushButton:hover{{color:{TEXT};border-color:#AEB8C4;background:#EEF3F8}}"
-                "QPushButton:pressed{background:#DDE5EE}"
-            )
-            b.clicked.connect(lambda _, f=cb: (f(), self._refresh()))
-            sl.addWidget(b)
-        sl.addStretch()
-        root.addWidget(sf)
-
+        # ── Refresh Timer (50ms, SWR018) ──
         self._timer = QTimer(); self._timer.timeout.connect(self._refresh); self._timer.start(50)
         self._refresh()
 
+    # ── small helpers ──
     @staticmethod
     def _make_label(text, size, color):
-        l = QLabel(text); l.setFont(_font(size)); l.setStyleSheet(f"color:{color};background:transparent;letter-spacing:1px;")
+        l = QLabel(text); l.setFont(_font(size))
+        l.setStyleSheet(f"color:{color};background:transparent;letter-spacing:1px;")
         return l
 
-    def _make_section_title(self, text: str) -> QLabel:
-        lbl = QLabel(text)
-        lbl.setFont(_font(10, True))
-        lbl.setStyleSheet(f"color: {TEXT_SUB}; background: transparent; letter-spacing: 1px;")
-        return lbl
+    def _vline(self) -> QFrame:
+        v = QFrame(); v.setFrameShape(QFrame.VLine)
+        v.setStyleSheet(f"background: {BORDER};"); v.setFixedWidth(1)
+        return v
+
+    # ── Input → CanInterface ──
+
+    def _on_acc_toggle(self):
+        self._can.send_button_input(ButtonInput(
+            btn_acc_off=True, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=None,
+        ))
+
+    def _on_cancel(self):
+        self._can.send_button_input(ButtonInput(
+            btn_acc_off=None, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=True,
+        ))
+
+    def _on_set(self):
+        self._can.send_button_input(ButtonInput(
+            btn_acc_off=None, btn_acc_set=True, btn_acc_res=None, btn_acc_cancel=None,
+        ))
+
+    def _on_res(self):
+        self._can.send_button_input(ButtonInput(
+            btn_acc_off=None, btn_acc_set=None, btn_acc_res=True, btn_acc_cancel=None,
+        ))
+
+    def _on_speed_up(self):
+        new_spd = self._last_set_speed + SPEED_INCREMENT_CMS
+        self._can.send_acc_setting(AccSetting(
+            set_speed=new_spd, distance_level=self._last_distance_level,
+        ))
+        self._last_set_speed = new_spd
+
+    def _on_speed_down(self):
+        new_spd = max(self._last_set_speed - SPEED_INCREMENT_CMS, MIN_SET_SPEED_CMS)
+        self._can.send_acc_setting(AccSetting(
+            set_speed=new_spd, distance_level=self._last_distance_level,
+        ))
+        self._last_set_speed = new_spd
+
+    def _on_distance(self, level: int):
+        lv = max(1, min(3, level))
+        self._can.send_acc_setting(AccSetting(
+            set_speed=self._last_set_speed, distance_level=lv,
+        ))
+        self._last_distance_level = lv
+
+    def _on_brake(self, pressed: bool):
+        self._brake_pressed = bool(pressed)
+        self._can.send_pedal_input(PedalInput(
+            brake=self._brake_pressed, accel_pwm=self._accel_pwm,
+        ))
+
+    def _on_accel(self, pwm: int):
+        self._accel_pwm = max(0, min(100, int(pwm)))
+        self._can.send_pedal_input(PedalInput(
+            brake=self._brake_pressed, accel_pwm=self._accel_pwm,
+        ))
 
     # ── Events ──
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
             self.showNormal() if self.isFullScreen() else self.close()
-        else: super().keyPressEvent(e)
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-
-    # ── SIM ──
-
-    def _toggle_front(self):
-        self._sim_front_vehicle = not self._sim_front_vehicle
-        if self._sim_front_vehicle:
-            self.ctrl.set_front_vehicle(True, 800)
-            self.ctrl.data.front_rel_speed_mps = -0.15
         else:
-            self.ctrl.set_front_vehicle(False, 0)
-            self.ctrl.data.front_rel_speed_mps = 0.0
+            super().keyPressEvent(e)
 
-    def _spd_up(self):  self.ctrl.data.current_speed_mps = round(self.ctrl.data.current_speed_mps + 0.01, 2)
-    def _spd_dn(self):  self.ctrl.data.current_speed_mps = max(0.0, round(self.ctrl.data.current_speed_mps - 0.01, 2))
-
-    # ── Refresh ──
+    # ── Poll + Render ──
 
     def _refresh(self):
-        d = self.ctrl.data
-        state = d.state
-        active = state in (AccState.CRUISING, AccState.FOLLOWING)
+        acc_info = self._can.get_acc_info()
+        veh_info = self._can.get_vehicle_info()
+        ecu = self._can.get_ecu_status()
 
-        # Gauges
-        self.gauge.set_value(d.current_speed_mps * 100.0, state, f"SET {d.set_speed_mps * 100.0:.0f} cm/s")
-        pwm = min(100, max(0, (d.current_speed_mps / max(d.set_speed_mps, 0.01)) * 50)) if active else d.accel_pct
-        self.pwm_gauge.set_value(pwm, state)
+        status = status_from_int(acc_info.status)
+        # ECU 피드백을 따라가도록 로컬 캐시 갱신
+        self._last_set_speed = int(acc_info.set_speed)
+        self._last_distance_level = int(acc_info.distance_level)
 
-        # HUD
-        sc = CLR_HUD[state]
+        active = status in ACTIVE_STATUSES
+        current_speed = float(veh_info.current_speed)
+        set_speed = int(acc_info.set_speed)
+
+        # ── Gauges ──
+        self.gauge.set_value(current_speed, status, f"SET {set_speed} cm/s" if active or status == AccStatus.STANDBY else "")
+        # PWM 게이지: 액티브 상태에서는 현재/목표 비율을 근사치로, 그 외에는 운전자 액셀 입력
+        if active and set_speed > 0:
+            pwm_pct = min(100.0, max(0.0, current_speed / set_speed * 50.0))
+        else:
+            pwm_pct = float(self._accel_pwm)
+        self.pwm_gauge.set_value(pwm_pct, status)
+
+        # ── HUD ──
+        sc = CLR_HUD[status]
         self._hud_dot.setStyleSheet(f"background:{sc};border-radius:7px;border:1px solid {sc};")
-        self._hud_state.setText(STATE_TEXT[state])
+        self._hud_state.setText(STATE_TEXT[status])
         self._hud_state.setStyleSheet(f"color:{sc};background:transparent;letter-spacing:3px;")
 
-        override = d.brake_pct > 5 or d.accel_pct > 5
-        self._hud_override.setVisible(override and state in (AccState.STANDBY, AccState.CRUISING, AccState.FOLLOWING))
+        override = self._brake_pressed or self._accel_pwm > 5
+        self._hud_override.setVisible(
+            override and status in (AccStatus.STANDBY, AccStatus.CRUISING, AccStatus.FOLLOWING)
+        )
 
-        self._hud_set.setText(f"SET {d.set_speed_mps * 100.0:.0f} cm/s" if active or state == AccState.STANDBY else "SET —")
-        self._hud_set.setStyleSheet(f"color:{CLR[state] if active else TEXT_FAINT};background:transparent;")
-
-        self._hud_gap.set_level(d.distance_level, inactive=(state == AccState.OFF))
-        self.fault_banner.setVisible(state == AccState.FAULT)
-
-        if d.front_vehicle_detected:
-            dm, rv = d.front_distance_mm / 1000.0, d.front_rel_speed_mps
-            fc = "#FF6B6B" if dm < 0.3 else "#F0A030" if dm < 0.6 else "#3FFFB0"
-            rc = "#FF6B6B" if rv < -0.05 else "#1D9E75" if rv > 0.05 else TEXT_FAINT
-            self._hud_dist.setText(f"{dm:.2f}m"); self._hud_dist.setStyleSheet(f"color:{fc};background:transparent;")
-            self._hud_relspd.setText(f"{'+' if rv > 0 else ''}{rv * 100.0:.0f}cm/s"); self._hud_relspd.setStyleSheet(f"color:{rc};background:transparent;")
+        if active or status == AccStatus.STANDBY:
+            self._hud_set.setText(f"SET {set_speed} cm/s")
+            self._hud_set.setStyleSheet(f"color:{CLR[status] if active else TEXT_FAINT};background:transparent;")
         else:
-            self._hud_dist.setText(""); self._hud_relspd.setText("")
+            self._hud_set.setText("SET —")
+            self._hud_set.setStyleSheet(f"color:{TEXT_FAINT};background:transparent;")
 
-        # Buttons
-        avail = self.ctrl.get_button_availability()
+        self._hud_gap.set_level(int(acc_info.distance_level), inactive=(status == AccStatus.OFF))
+
+        # ── FAULT 배너 (SWR019) ──
+        # FAULT 진입 또는 실제 CAN 연결 중 HB lost/에러코드 수신 시 표시.
+        # 시뮬 모드 (`is_connected() == False`) 에서는 HB 체크를 건너뛴다.
+        fault_banner_text = self._fault_text(status, ecu, self._can.is_connected())
+        if fault_banner_text:
+            self.fault_banner.setText(fault_banner_text)
+            self.fault_banner.show()
+        else:
+            self.fault_banner.hide()
+
+        # ── CAN link 상태 ──
+        if self._can.is_connected():
+            link_color = "#1D9E75" if ecu.heartbeat_ok else "#EF9F27"
+            link_text = "● CAN" if ecu.heartbeat_ok else "● CAN · no HB"
+        else:
+            link_color = "#8A95A3"
+            link_text = "○ CAN sim"
+        self._hud_link.setText(link_text)
+        self._hud_link.setStyleSheet(f"color:{link_color};background:transparent;")
+
+        # ── Buttons ──
+        avail = BUTTON_AVAILABILITY[status]
         for key, btn in self.buttons.items():
             btn.setEnabled(avail.get(key, False))
 
         # ACC toggle highlight
         if "acc_toggle" in self.buttons:
             btn = self.buttons["acc_toggle"]
-            if state == AccState.OFF:
+            if status == AccStatus.OFF:
                 btn.setText("ACC OFF"); btn.setStyleSheet(_btn_style("#E24B4A"))
             else:
-                btn.setText("ACC ON"); btn.setStyleSheet(_btn_active_style(CLR[state]))
+                btn.setText("ACC ON"); btn.setStyleSheet(_btn_active_style(CLR[status]))
 
         # Distance buttons highlight
         for i in (1, 2, 3):
             if (k := f"dist_{i}") in self.buttons:
                 b = self.buttons[k]
-                if d.distance_level == i and state != AccState.OFF:
+                if int(acc_info.distance_level) == i and status != AccStatus.OFF:
                     b.setStyleSheet(_btn_active_style(DIST_CLR[i]))
                 else:
                     b.setStyleSheet(_btn_style("#378ADD"))
+
+    @staticmethod
+    def _fault_text(status: AccStatus, ecu, can_connected: bool) -> str:
+        """FAULT 배너에 표시할 문구. 없으면 빈 문자열."""
+        if status == AccStatus.FAULT:
+            if ecu.error_code:
+                return f"FAULT  |  ECU error 0x{ecu.error_code:02X}  |  press ACC to clear"
+            return "FAULT  |  press ACC to clear"
+        if not can_connected:
+            return ""
+        if not ecu.heartbeat_ok:
+            return "ECU HEARTBEAT LOST  |  checking CAN link…"
+        if ecu.error_code:
+            return f"ECU error 0x{ecu.error_code:02X}"
+        return ""
 
 
 # ═══════════════════════════════════════════════════════════════
 #  Entry Point
 # ═══════════════════════════════════════════════════════════════
 
-def main():
+def gui_main(can_interface):
+    """QApplication 을 띄우고 HMI 윈도우를 주입된 `can_interface` 로 실행."""
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
@@ -770,10 +817,6 @@ def main():
     QFontDatabase.addApplicationFont("JetBrainsMono-Regular.ttf")
     app.setFont(QFont(MONO, 10))
 
-    win = HmiWindow()
+    win = HmiWindow(can_interface)
     win.showFullScreen()
-    sys.exit(app.exec_())
-
-
-if __name__ == "__main__":
-    main()
+    return app.exec_()
