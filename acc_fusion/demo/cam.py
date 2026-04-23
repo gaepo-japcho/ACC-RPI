@@ -1,19 +1,22 @@
 import cv2
 from ..camera import CameraReader
+from common import get_logger
+
+log = get_logger(__name__)
 
 
 def main():
     with CameraReader.from_config() as cam:
-        print("카메라 테스트 시작 — 'q' 키로 종료")
-        print(f"해상도: {cam.width}x{cam.height}, FPS: {cam.fps}")
+        log.info("카메라 테스트 시작 — 'q' 키로 종료")
+        log.info(f"해상도: {cam.width}x{cam.height}, FPS: {cam.fps}")
 
         while True:
             frame = cam.read()
             if frame is None:
-                print("프레임을 읽을 수 없습니다.")
+                log.error("프레임을 읽을 수 없습니다.")
                 break
 
-            print(
+            log.debug(
                 f"frame_id={frame.frame_id} ts={frame.timestamp:.3f} shape={frame.image.shape}"
             )
 
