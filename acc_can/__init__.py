@@ -8,11 +8,10 @@ ACC Project - Raspberry Pi CAN Interface Module
   - ECU로부터 CAN 수신하여 HMI 모듈에 제공 (폴링)
   - Heartbeat 감시 및 ERR 처리
 
-진실의 원천:
-  CAN ID / 페이로드 레이아웃 / 시그널 범위는 모두 `../ACC-CANDB/acc_db.dbc`
-  가 결정한다. 본 모듈은 cantools 로 DBC 를 import 시점에 로드하여 ID 와
-  encode/decode 를 위임한다. 수동 bit-shift / byte 조립 금지 — DBC 가 바뀌면
-  자동으로 반영되어야 한다.
+구조 (2026-04-23 리팩터):
+  _dbc.py    — DBC 로드 + ID 상수 + msg()/msg_id() 헬퍼
+  _codec.py  — encode/decode pure function (메시지별)
+  __init__.py — CanInterface 클래스 (스레딩 + 상태 + 공개 API)
 
 CAN 메시지 (DBC 2026-04-23 기준):
   TX (SENSOR → ECU):
@@ -36,25 +35,33 @@ CAN 메시지 (DBC 2026-04-23 기준):
               SAF004, SAF015, SAF018
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __author__ = "Wis3754"
 
-import threading  # TX / RX / HB 병렬 실행
-import time
 import logging
-from pathlib import Path
+import threading
+import time
+from dataclasses import replace
 from typing import Optional
 
-import cantools
-
+from interfaces.acc_info import AccInfo
+from interfaces.acc_setting import AccSetting
 from interfaces.acc_status import AccStatus
 from interfaces.button_input import ButtonInput
-from interfaces.pedal_input import PedalInput
-from interfaces.acc_setting import AccSetting
-from interfaces.fusion_data import FusionData
-from interfaces.acc_info import AccInfo
-from interfaces.vehicle_info import VehicleInfo
 from interfaces.ecu_status import EcuStatus
+from interfaces.fusion_data import FusionData
+from interfaces.pedal_input import PedalInput
+from interfaces.vehicle_info import VehicleInfo
+
+from . import _codec
+from ._dbc import (
+    MSG_ID_ACC_CTRL,
+    MSG_ID_ACC_STATUS,
+    MSG_ID_ECU_HEARTBEAT,
+    MSG_ID_SENSOR_FUSION,
+    MSG_ID_SENSOR_HEARTBEAT,
+    MSG_ID_VEH_CTRL,
+)
 
 try:
     import can
@@ -65,34 +72,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ── DBC 로드 ─────────────────────────────────────────────────────────────────
-# 상대경로: ACC-RPI/acc_can/__init__.py → parents[2]=/mnt/c/acc → ACC-CANDB/
-_DBC_PATH = Path(__file__).resolve().parents[2] / "ACC-CANDB" / "acc_db.dbc"
-_db = cantools.database.load_file(str(_DBC_PATH))   # 실패 시 ImportError 전파
-
-
-def _msg(name: str):
-    """DBC 메시지 객체 조회 (이름 오타 시 KeyError)."""
-    return _db.get_message_by_name(name)
-
-
-def _id(name: str) -> int:
-    """DBC 메시지의 CAN arbitration ID."""
-    return _msg(name).frame_id
-
-
-# ── CAN Message IDs (DBC 조회 — 하드코딩 금지) ──────────────────────────────
-MSG_ID_SENSOR_FUSION    = _id("SENSOR_FUSION")      # 0x110
-MSG_ID_SENSOR_HEARTBEAT = _id("SENSOR_HEARTBEAT")   # 0x111
-MSG_ID_VEH_CTRL         = _id("VEH_CTRL")           # 0x120
-MSG_ID_ACC_CTRL         = _id("ACC_CTRL")           # 0x510
-MSG_ID_ACC_STATUS       = _id("ACC_STATUS")         # 0x520
-MSG_ID_ECU_HEARTBEAT    = _id("ECU_HEARTBEAT")      # 0x410
-
 # ── TX 주기 ──────────────────────────────────────────────────────────────────
 TX_PERIOD_20MS_SEC = 0.020  # VEH_CTRL, SENSOR_FUSION, SENSOR_HEARTBEAT
 TX_PERIOD_50MS_SEC = 0.050  # ACC_CTRL
-TX_POLL_SEC        = 0.005  # TX 루프 폴링 간격 (5ms)
+TX_POLL_SEC        = 0.005  # TX 루프 폴링 간격
 GUI_REFRESH_MS     = 50     # HMI 폴링 주기 (참고용)
 
 # ── Heartbeat 타임아웃 ──────────────────────────────────────────────────────
@@ -116,12 +99,13 @@ class CanInterface:
     def __init__(self, channel: str = "can0", bustype: str = "socketcan"):
         self._channel = channel
         self._bustype = bustype
-        self._bus: Optional[object] = None  # 연결 전
-        self._running = False  # 스레드 플래그
+        self._bus: Optional[object] = None
+        self._running = False
 
-        # ── TX 버퍼 ──────────────────────────────────────────────────────────
-        self._lock = threading.Lock()  # RX/TX/HMI 간 동시 접근 보호
+        # ── 동기화 ───────────────────────────────────────────────────────────
+        self._lock = threading.Lock()  # RX/TX/HMI 간 상태 버퍼 보호
 
+        # ── TX 상태 버퍼 ─────────────────────────────────────────────────────
         # button_input: Edge Trigger — TX 후 자동 클리어
         self._button_input = ButtonInput(
             btn_acc_off=False,
@@ -149,7 +133,7 @@ class CanInterface:
         )
         self._fusion_last_update = 0.0
 
-        # ── RX 버퍼 ──────────────────────────────────────────────────────────
+        # ── RX 상태 버퍼 ─────────────────────────────────────────────────────
         self._acc_info = AccInfo(
             status=AccStatus.OFF.value,
             set_speed=0,
@@ -209,7 +193,7 @@ class CanInterface:
         logger.info("CanInterface started.")
 
     def stop(self) -> None:
-        """TX 타이머/RX 스레드 종료 + CAN 버스 해제."""
+        """TX/RX/HB 스레드 종료 + CAN 버스 해제."""
         self._running = False
 
         for t in (self._tx_thread, self._rx_thread, self._hb_thread):
@@ -298,24 +282,17 @@ class CanInterface:
     def get_acc_info(self) -> AccInfo:
         """ECU 에서 수신한 ACC 상태 반환. HMI 50ms 폴링용."""
         with self._lock:
-            return AccInfo(
-                status=self._acc_info.status,
-                set_speed=self._acc_info.set_speed,
-                distance_level=self._acc_info.distance_level,
-            )
+            return replace(self._acc_info)
 
     def get_vehicle_info(self) -> VehicleInfo:
         """자차 속도 반환. 현재 MTR_SPD_FB RX 미구현 → 항상 0.0."""
         with self._lock:
-            return VehicleInfo(current_speed=self._vehicle_info.current_speed)
+            return replace(self._vehicle_info)
 
     def get_ecu_status(self) -> EcuStatus:
         """ECU 통신 상태 + 에러 코드 반환."""
         with self._lock:
-            return EcuStatus(
-                heartbeat_ok=self._ecu_status.heartbeat_ok,
-                error_code=self._ecu_status.error_code,
-            )
+            return replace(self._ecu_status)
 
     # =========================================================================
     # 내부: TX 루프 (multi-rate: 20ms + 50ms)
@@ -325,7 +302,7 @@ class CanInterface:
         """
         20ms 주기: VEH_CTRL, SENSOR_FUSION, SENSOR_HEARTBEAT
         50ms 주기: ACC_CTRL
-        5ms 폴링으로 두 주기 독립 관리 (deadline 시 각자 재스케줄).
+        5ms 폴링으로 두 주기 독립 관리.
         """
         next_20 = time.monotonic()
         next_50 = time.monotonic()
@@ -344,12 +321,9 @@ class CanInterface:
     def _tx_veh_ctrl(self) -> None:
         """0x120 VEH_CTRL (20ms) — brake + accel PWM."""
         with self._lock:
-            signals = {
-                "SET_ACCEL_PWM": int(self._pedal_input.accel_pwm),
-                "BTN_BRAKE":     int(self._pedal_input.brake),
-            }
+            pedal = replace(self._pedal_input)  # snapshot
         try:
-            data = _msg("VEH_CTRL").encode(signals)
+            data = _codec.encode_veh_ctrl(pedal)
         except Exception as e:
             logger.error(f"VEH_CTRL encode error: {e}")
             return
@@ -361,22 +335,15 @@ class CanInterface:
         TX 후 버튼 비트 즉시 클리어 — 한 번 펄스 후 0 유지 (DBC edge trigger 규약).
         """
         with self._lock:
-            signals = {
-                "BTN_ACC_OFF":    int(self._button_input.btn_acc_off),
-                "BTN_ACC_SET":    int(self._button_input.btn_acc_set),
-                "BTN_ACC_RES":    int(self._button_input.btn_acc_res),
-                "BTN_ACC_CANCEL": int(self._button_input.btn_acc_cancel),
-                "SET_ACC_SPD":    int(self._acc_setting.set_speed),
-                "SET_ACC_LVL":    int(self._acc_setting.distance_level),
-            }
+            buttons = replace(self._button_input)  # snapshot
+            setting = replace(self._acc_setting)
             # Edge trigger: TX 후 클리어
             self._button_input.btn_acc_off = False
             self._button_input.btn_acc_set = False
             self._button_input.btn_acc_res = False
             self._button_input.btn_acc_cancel = False
-
         try:
-            data = _msg("ACC_CTRL").encode(signals)
+            data = _codec.encode_acc_ctrl(buttons, setting)
         except Exception as e:
             logger.error(f"ACC_CTRL encode error: {e}")
             return
@@ -385,12 +352,9 @@ class CanInterface:
     def _tx_sensor_fusion(self) -> None:
         """0x110 SENSOR_FUSION (20ms) — 전방 차량 감지 + 거리(mm)."""
         with self._lock:
-            signals = {
-                "VEH_DET":  int(self._fusion_data.detected),
-                "VEH_DIST": int(self._fusion_data.distance),
-            }
+            fusion = replace(self._fusion_data)  # snapshot
         try:
-            data = _msg("SENSOR_FUSION").encode(signals)
+            data = _codec.encode_sensor_fusion(fusion)
         except Exception as e:
             logger.error(f"SENSOR_FUSION encode error: {e}")
             return
@@ -408,12 +372,8 @@ class CanInterface:
         err_sensor = 1 if (now - last_upd > 0.06 and last_upd != 0.0) else 0
         self._hb_sensor_counter = (self._hb_sensor_counter + 1) % 256
 
-        signals = {
-            "HB_SENSOR":  self._hb_sensor_counter,
-            "ERR_SENSOR": err_sensor,
-        }
         try:
-            data = _msg("SENSOR_HEARTBEAT").encode(signals)
+            data = _codec.encode_sensor_heartbeat(self._hb_sensor_counter, err_sensor)
         except Exception as e:
             logger.error(f"SENSOR_HEARTBEAT encode error: {e}")
             return
@@ -442,29 +402,27 @@ class CanInterface:
                 logger.error(f"CAN RX error: {e}")
 
     def _parse_acc_status(self, data: bytes) -> None:
-        """0x520 ACC_STATUS 파싱 (cantools decode — 레이아웃 전부 DBC 에 위임)."""
+        """0x520 ACC_STATUS → self._acc_info."""
         try:
-            signals = _msg("ACC_STATUS").decode(data)
+            acc_info = _codec.decode_acc_status(data)
         except Exception as e:
             logger.warning(f"ACC_STATUS decode error: {e}")
             return
-
         with self._lock:
-            # GET_ACC_STATE 는 enum (NamedSignalValue) — int 로 강제 변환
-            self._acc_info.status         = int(signals["GET_ACC_STATE"])
-            self._acc_info.set_speed      = int(signals["GET_ACC_SPD"])
-            self._acc_info.distance_level = int(signals["GET_ACC_LVL"])
+            self._acc_info.status         = acc_info.status
+            self._acc_info.set_speed      = acc_info.set_speed
+            self._acc_info.distance_level = acc_info.distance_level
 
     def _parse_ecu_heartbeat(self, data: bytes) -> None:
-        """0x410 ECU_HEARTBEAT 파싱 (cantools decode)."""
+        """0x410 ECU_HEARTBEAT → self._ecu_status.error_code + HB 수신 시각 갱신."""
         try:
-            signals = _msg("ECU_HEARTBEAT").decode(data)
+            err_ecu = _codec.decode_ecu_heartbeat(data)
         except Exception as e:
             logger.warning(f"ECU_HEARTBEAT decode error: {e}")
             return
         with self._lock:
             self._hb_last_rx = time.time()
-            self._ecu_status.error_code = int(signals["ERR_ECU"])
+            self._ecu_status.error_code = err_ecu
             # heartbeat_ok 는 _hb_watchdog 가 갱신
 
     # =========================================================================
