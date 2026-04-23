@@ -57,8 +57,9 @@ BUTTON_AVAILABILITY: dict[AccStatus, dict[str, bool]] = {
 
 # 1/10 스케일카 속도 파라미터 (단위: cm/s, SYS032 / STK024 / SWR031)
 MIN_SET_SPEED_CMS = 5         # 최소 설정 속도
+MAX_SET_SPEED_CMS = 127       # DBC SET_ACC_SPD int8 상한. 이 이상은 CAN 에 실리지 못함
 SPEED_INCREMENT_CMS = 1       # SPD+/- 클릭당 증감량
-SPEED_GAUGE_MAX_CMS = 200     # 속도 게이지 최대 눈금
+SPEED_GAUGE_MAX_CMS = 200     # 속도 게이지 최대 눈금 (현재속도는 int16 factor 0.01 이라 더 큼)
 DEFAULT_DISTANCE_LEVEL = 3    # 기본 거리 단계 (SYS034)
 
 

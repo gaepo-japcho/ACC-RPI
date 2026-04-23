@@ -29,8 +29,8 @@ from interfaces.acc_setting import AccSetting
 
 from acc_hmi.acc_state import (
     ACTIVE_STATUSES, BUTTON_AVAILABILITY,
-    MIN_SET_SPEED_CMS, SPEED_INCREMENT_CMS, SPEED_GAUGE_MAX_CMS,
-    DEFAULT_DISTANCE_LEVEL, status_from_int,
+    MIN_SET_SPEED_CMS, MAX_SET_SPEED_CMS, SPEED_INCREMENT_CMS,
+    SPEED_GAUGE_MAX_CMS, DEFAULT_DISTANCE_LEVEL, status_from_int,
 )
 
 
@@ -651,7 +651,7 @@ class HmiWindow(QMainWindow):
         ))
 
     def _on_speed_up(self):
-        new_spd = self._last_set_speed + SPEED_INCREMENT_CMS
+        new_spd = min(self._last_set_speed + SPEED_INCREMENT_CMS, MAX_SET_SPEED_CMS)
         self._can.send_acc_setting(AccSetting(
             set_speed=new_spd, distance_level=self._last_distance_level,
         ))
