@@ -64,11 +64,13 @@ python main.py                  # 시뮬레이션 모드로 GUI 실행
 
 루트 CLAUDE.md / 아키텍처 문서가 정의한 ID 와 현재 `can_interface.py` 가 쓰는 ID 가 다르다. **아키텍처가 진실의 원천**이며 코드를 맞춰가야 한다:
 
-| 메시지 | 설계 (root / ACC-docs) | 코드 현황 | 주기 |
+| 메시지 | 설계 (DBC / ACC-docs) | 코드 현황 | 주기 |
 |---|---|---|---|
-| RASPI_SENSOR (RPi→ECU, 카메라/LiDAR 결과) | `0x110` | 미구현 | 20 ms |
+| SENSOR_FUSION (RPi→ECU, 카메라/LiDAR 결과) | `0x110` | 미구현 | 20 ms |
+| SENSOR_HEARTBEAT (RPi→ECU, HB+ERR) | `0x111` | 미구현 | 20 ms |
 | GUI_CTRL (RPi→ECU, 버튼 입력) | `0x510` | `0x200` placeholder | 50 ms |
 | GUI_STATUS (ECU→RPi, 상태) | `0x520` | `0x201` placeholder | 50 ms |
+| ECU_HEARTBEAT (ECU→RPi, HB+ERR) | `0x410` | 미구현 | 10 ms |
 
 DBC 확정 시 `can_interface.py` 의 상수 + `encode_driver_input()` 호출부를 함께 수정. `encode_driver_input()` 은 정의만 되어 있고 아직 호출되지 않는다.
 
