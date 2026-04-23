@@ -73,10 +73,9 @@ uv run python acc_hmi/main.py   # 시뮬레이션 모드로 GUI 실행
 | `0x111` | `SENSOR_HEARTBEAT` | RPi → ECU | 20ms | `_tx_sensor_heartbeat` |
 | `0x120` | `VEH_CTRL` | RPi → ECU | 20ms | `_tx_veh_ctrl` (brake+accel_pwm) |
 | `0x510` | `ACC_CTRL` | RPi → ECU | 50ms | `_tx_acc_ctrl` (버튼 edge+목표 속도/레벨) |
+| `0x300` | `MTR_SPD_FB` | MTR → RPi | 10ms | `_parse_mtr_spd_fb` (GET_SPD_AVG → `VehicleInfo.current_speed`) |
 | `0x410` | `ECU_HEARTBEAT` | ECU → RPi | 10ms | `_parse_ecu_heartbeat` |
 | `0x520` | `ACC_STATUS` | ECU → RPi | 50ms | `_parse_acc_status` |
-
-**미구현**: `0x300 MTR_SPD_FB` (자차속도) RX. 현재 `VehicleInfo.current_speed` 는 0.0 고정. HMI 자차속도 표시 필요 시 추가.
 
 ## acc_can 구조 (2026-04-23 리팩터)
 

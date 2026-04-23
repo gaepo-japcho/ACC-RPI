@@ -31,9 +31,10 @@ def msg_id(name: str) -> int:
 
 
 # ── CAN Message IDs (DBC 조회 — 하드코딩 금지) ──────────────────────────────
-MSG_ID_SENSOR_FUSION    = msg_id("SENSOR_FUSION")      # 0x110, SENSOR→ECU, 20ms
-MSG_ID_SENSOR_HEARTBEAT = msg_id("SENSOR_HEARTBEAT")   # 0x111, SENSOR→ECU, 20ms
-MSG_ID_VEH_CTRL         = msg_id("VEH_CTRL")           # 0x120, SENSOR→ECU, 20ms
-MSG_ID_ACC_CTRL         = msg_id("ACC_CTRL")           # 0x510, SENSOR→ECU, 50ms
-MSG_ID_ACC_STATUS       = msg_id("ACC_STATUS")         # 0x520, ECU→SENSOR, 50ms
-MSG_ID_ECU_HEARTBEAT    = msg_id("ECU_HEARTBEAT")      # 0x410, ECU→*,      10ms
+MSG_ID_SENSOR_FUSION    = msg_id("SENSOR_FUSION")      # 0x110, SENSOR→ECU,      20ms
+MSG_ID_SENSOR_HEARTBEAT = msg_id("SENSOR_HEARTBEAT")   # 0x111, SENSOR→ECU,      20ms
+MSG_ID_VEH_CTRL         = msg_id("VEH_CTRL")           # 0x120, SENSOR→ECU,      20ms
+MSG_ID_ACC_CTRL         = msg_id("ACC_CTRL")           # 0x510, SENSOR→ECU,      50ms
+MSG_ID_ACC_STATUS       = msg_id("ACC_STATUS")         # 0x520, ECU→SENSOR,      50ms
+MSG_ID_ECU_HEARTBEAT    = msg_id("ECU_HEARTBEAT")      # 0x410, ECU→*,           10ms
+MSG_ID_MTR_SPD_FB       = msg_id("MTR_SPD_FB")         # 0x300, MTR→ECU,SENSOR,  10ms (자차속도)

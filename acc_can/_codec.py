@@ -16,6 +16,7 @@ TX encoders (Python obj → bytes):
 RX decoders (bytes → Python obj):
   decode_acc_status      0x520 ACC_STATUS     → AccInfo
   decode_ecu_heartbeat   0x410 ECU_HEARTBEAT  → err_ecu (int)
+  decode_mtr_spd_fb      0x300 MTR_SPD_FB     → 자차 평균속도 (float cm/s)
 """
 from interfaces.acc_info import AccInfo
 from interfaces.acc_setting import AccSetting
@@ -85,3 +86,14 @@ def decode_ecu_heartbeat(data: bytes) -> int:
     """0x410 ECU_HEARTBEAT → err_ecu (0=정상, 그 외=에러)."""
     signals = _dbc.msg("ECU_HEARTBEAT").decode(data, decode_choices=False)
     return int(signals["ERR_ECU"])
+
+
+def decode_mtr_spd_fb(data: bytes) -> float:
+    """
+    0x300 MTR_SPD_FB → 자차 평균속도 (cm/s).
+
+    cantools 가 DBC factor 0.02 를 자동 적용해 scaled float 반환.
+    GET_SPD_LF/RF/LR/RR (개별 휠 속도) 는 ECU-only 수신자라 SENSOR 는 무시.
+    """
+    signals = _dbc.msg("MTR_SPD_FB").decode(data, decode_choices=False)
+    return float(signals["GET_SPD_AVG"])

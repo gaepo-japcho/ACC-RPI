@@ -19,12 +19,10 @@ CAN 메시지 (DBC 2026-04-23 기준):
     0x111 SENSOR_HEARTBEAT  RPi HB/ERR            20ms
     0x120 VEH_CTRL          brake + accel_pwm     20ms  (SYS006/007, SAF004/015)
     0x510 ACC_CTRL          ACC 버튼 + 목표       50ms  (SYS030)
-  RX (ECU → SENSOR):
+  RX (ECU → SENSOR / MTR → SENSOR):
+    0x300 MTR_SPD_FB        자차 평균속도          10ms  (GET_SPD_AVG int16)
     0x410 ECU_HEARTBEAT     ECU HB/ERR            10ms  (SAF018 ASIL-B)
     0x520 ACC_STATUS        ACC 상태 피드백       50ms  (SYS031)
-
-  * MTR_SPD_FB (0x300 GET_SPD_AVG) RX 는 현재 미구현 — _vehicle_info.current_speed
-    는 0.0 에서 갱신되지 않는다. HMI 는 자차속도 표시 위해 추후 RX 추가 필요.
 
 타임아웃:
   SENSOR_FUSION 미갱신 60ms → ERR_SENSOR 설정  (SWR013)
@@ -58,6 +56,7 @@ from ._dbc import (
     MSG_ID_ACC_CTRL,
     MSG_ID_ACC_STATUS,
     MSG_ID_ECU_HEARTBEAT,
+    MSG_ID_MTR_SPD_FB,
     MSG_ID_SENSOR_FUSION,
     MSG_ID_SENSOR_HEARTBEAT,
     MSG_ID_VEH_CTRL,
@@ -140,8 +139,8 @@ class CanInterface:
             distance_level=3,
         )
 
-        # NOTE: MTR_SPD_FB RX 미구현 — current_speed 는 0.0 고정.
-        # 자차속도 표시 필요 시 MTR_SPD_FB (0x300) 의 GET_SPD_AVG RX 추가.
+        # 자차 평균속도 (GET_SPD_AVG, int16 × 0.02 cm/s).
+        # _parse_mtr_spd_fb 가 0x300 MTR_SPD_FB 10ms 수신 시 갱신.
         self._vehicle_info = VehicleInfo(current_speed=0.0)
 
         self._ecu_status = EcuStatus(
@@ -285,7 +284,7 @@ class CanInterface:
             return replace(self._acc_info)
 
     def get_vehicle_info(self) -> VehicleInfo:
-        """자차 속도 반환. 현재 MTR_SPD_FB RX 미구현 → 항상 0.0."""
+        """자차 평균속도 반환 (MTR_SPD_FB 10ms 로 갱신)."""
         with self._lock:
             return replace(self._vehicle_info)
 
@@ -397,7 +396,8 @@ class CanInterface:
                     self._parse_acc_status(msg.data)
                 elif msg.arbitration_id == MSG_ID_ECU_HEARTBEAT:
                     self._parse_ecu_heartbeat(msg.data)
-                # MTR_SPD_FB (0x300) RX 는 현재 미구현
+                elif msg.arbitration_id == MSG_ID_MTR_SPD_FB:
+                    self._parse_mtr_spd_fb(msg.data)
             except Exception as e:
                 logger.error(f"CAN RX error: {e}")
 
@@ -424,6 +424,16 @@ class CanInterface:
             self._hb_last_rx = time.time()
             self._ecu_status.error_code = err_ecu
             # heartbeat_ok 는 _hb_watchdog 가 갱신
+
+    def _parse_mtr_spd_fb(self, data: bytes) -> None:
+        """0x300 MTR_SPD_FB → self._vehicle_info.current_speed (cm/s)."""
+        try:
+            speed_cms = _codec.decode_mtr_spd_fb(data)
+        except Exception as e:
+            logger.warning(f"MTR_SPD_FB decode error: {e}")
+            return
+        with self._lock:
+            self._vehicle_info.current_speed = round(speed_cms, 2)
 
     # =========================================================================
     # 내부: Heartbeat 감시
