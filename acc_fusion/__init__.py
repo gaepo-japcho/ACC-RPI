@@ -32,29 +32,42 @@ class Fusion(metaclass=Singleton):
         self._scan_lock = threading.Lock()
 
         self._stop_event = threading.Event()
+        self._camera_thread: threading.Thread | None = None
+        self._lidar_thread: threading.Thread | None = None
+        self._running = False
+
+    def __enter__(self) -> "Fusion":
+        if self._running:
+            log.warning("Fusion already running.")
+            return self
+        log.info("Fusion 시작")
+        self._cam.open()
+        self._lidar.open()
+        self._stop_event.clear()
         self._camera_thread = threading.Thread(
             target=self._camera_worker, daemon=True, name="fusion-camera"
         )
         self._lidar_thread = threading.Thread(
             target=self._lidar_worker, daemon=True, name="fusion-lidar"
         )
-
-    def __enter__(self) -> "Fusion":
-        log.info("Fusion 시작")
-        self._cam.open()
-        self._lidar.open()
         self._camera_thread.start()
         self._lidar_thread.start()
+        self._running = True
         log.info("카메라/LiDAR 워커 스레드 시작")
         return self
 
     def __exit__(self, *_) -> None:
+        if not self._running:
+            return
         log.info("Fusion 종료 중...")
         self._stop_event.set()
-        self._camera_thread.join(timeout=2.0)
-        self._lidar_thread.join(timeout=2.0)
+        if self._camera_thread:
+            self._camera_thread.join(timeout=2.0)
+        if self._lidar_thread:
+            self._lidar_thread.join(timeout=2.0)
         self._cam.close()
         self._lidar.close()
+        self._running = False
         log.info("Fusion 종료 완료")
 
     def _camera_worker(self) -> None:
