@@ -6,7 +6,9 @@ import numpy as np
 
 from common.singleton import Singleton
 from common import get_logger
-from interfaces.fusion import FusionData
+from interfaces.fusion_data import FusionData
+from acc_can import CanInterface
+from acc_can._dbc import msg
 
 log = get_logger(__name__)
 
@@ -14,14 +16,17 @@ __all__ = ["FusionData", "Fusion"]
 
 _VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 _FRONT_ANGLE_DEG = 30  # 전방으로 인정할 좌우 범위 (±30°)
+# SENSOR_FUSION TX 주기에 맞춰 push (DBC GenMsgCycleTime).
+_PUSH_PERIOD_SEC = msg("SENSOR_FUSION").cycle_time / 1000
 
 
 class Fusion(metaclass=Singleton):
-    def __init__(self):
+    def __init__(self, can: CanInterface):
         from .camera import CameraReader
         from .lidar import LidarReader, LidarScan
         from .yolo import YOLODetector
 
+        self._can = can
         self._cam = CameraReader.from_config()
         self._lidar = LidarReader.from_config()
         self._detector = YOLODetector.from_config()
@@ -34,6 +39,7 @@ class Fusion(metaclass=Singleton):
         self._stop_event = threading.Event()
         self._camera_thread: threading.Thread | None = None
         self._lidar_thread: threading.Thread | None = None
+        self._push_thread: threading.Thread | None = None
         self._running = False
 
     def __enter__(self) -> "Fusion":
@@ -50,10 +56,14 @@ class Fusion(metaclass=Singleton):
         self._lidar_thread = threading.Thread(
             target=self._lidar_worker, daemon=True, name="fusion-lidar"
         )
+        self._push_thread = threading.Thread(
+            target=self._push_worker, daemon=True, name="fusion-push"
+        )
         self._camera_thread.start()
         self._lidar_thread.start()
+        self._push_thread.start()
         self._running = True
-        log.info("카메라/LiDAR 워커 스레드 시작")
+        log.info("카메라/LiDAR/Push 워커 스레드 시작")
         return self
 
     def __exit__(self, *_) -> None:
@@ -65,6 +75,8 @@ class Fusion(metaclass=Singleton):
             self._camera_thread.join(timeout=2.0)
         if self._lidar_thread:
             self._lidar_thread.join(timeout=2.0)
+        if self._push_thread:
+            self._push_thread.join(timeout=2.0)
         self._cam.close()
         self._lidar.close()
         self._running = False
@@ -90,22 +102,19 @@ class Fusion(metaclass=Singleton):
             with self._scan_lock:
                 self._latest_scan = scan
 
+    def _push_worker(self) -> None:
+        """SENSOR_FUSION 주기로 update() → CanInterface.update_fusion_data() push."""
+        while not self._stop_event.wait(_PUSH_PERIOD_SEC):
+            self._can.update_fusion_data(self.update())
+
     def update(self) -> FusionData:
         """
-        Fusion 모듈이 산출한 전방 차량 데이터를 반환합니다.
-
-        호출 시점: Fusion 모듈의 센서 처리 완료 시 (비동기)
-        호출 주체: Fusion 모듈
+        최신 카메라/LiDAR 상태로부터 전방 차량 FusionData 산출.
 
         return:
             FusionData:
-                detected (bool) — 전방 차량 감지 여부
-                distance (int)  — 전방 차량 거리 (cm)
-
-        동작:
-            - CAN 모듈은 내부 버퍼에 최신값 유지
-            - 다음 20ms TX 주기에 Raspi→ECU 메시지의 VEH_DET, VEH_DIST에 포함
-            - 일정 시간(예: 100ms) 미갱신 시 ERR_SENSOR 플래그 설정
+                detected (bool) — 전방 차량 감지 여부 (YOLO 분류 결과)
+                distance (int)  — 전방 차량 최근접 거리 (mm, 0~12000 — DBC VEH_DIST)
         """
         with self._vehicles_lock:
             vehicles = self._latest_vehicles.copy()
@@ -128,10 +137,7 @@ class Fusion(metaclass=Singleton):
             log.debug("전방 차량 감지, 전방 LiDAR 포인트 없음")
             return FusionData(detected=True, distance=0)
 
-        distance_cm = int(np.min(front_points[:, 1]) / 10)
-        log.debug(f"전방 차량 감지: distance={distance_cm}cm")
-        return FusionData(detected=True, distance=distance_cm)
-
-    def update_fusion_data(self) -> FusionData:
-        """update()와 동일, 이름만 다름"""
-        return self.update()
+        # lidar.py 가 [angle_deg, distance_mm] 컬럼으로 반환 (RPLiDAR raw=mm).
+        distance_mm = int(np.min(front_points[:, 1]))
+        log.debug(f"전방 차량 감지: distance={distance_mm}mm")
+        return FusionData(detected=True, distance=distance_mm)
