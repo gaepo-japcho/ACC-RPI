@@ -41,6 +41,7 @@ import threading
 import time
 from dataclasses import replace
 from typing import Optional
+from common.singleton import Singleton
 
 from interfaces.acc_info import AccInfo
 from interfaces.acc_setting import AccSetting
@@ -60,6 +61,7 @@ from ._dbc import (
     MSG_ID_SENSOR_FUSION,
     MSG_ID_SENSOR_HEARTBEAT,
     MSG_ID_VEH_CTRL,
+    msg,
 )
 
 try:
@@ -71,28 +73,26 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ── TX 주기 ──────────────────────────────────────────────────────────────────
-TX_PERIOD_20MS_SEC = 0.020  # VEH_CTRL, SENSOR_FUSION, SENSOR_HEARTBEAT
-TX_PERIOD_50MS_SEC = 0.050  # ACC_CTRL
-TX_POLL_SEC        = 0.005  # TX 루프 폴링 간격
-GUI_REFRESH_MS     = 50     # HMI 폴링 주기 (참고용)
+# ── TX 폴링 간격 ────────────────────────────────────────────────────────────
+# 메시지 주기는 DBC GenMsgCycleTime 에서 읽어 _tx_loop 이 메시지별로 독립 스케줄.
+TX_POLL_SEC    = 0.005  # TX 루프 폴링 granularity
+GUI_REFRESH_MS = 50     # HMI 폴링 주기 (참고용)
 
 # ── Heartbeat 타임아웃 ──────────────────────────────────────────────────────
-HB_TIMEOUT_SEC = 0.15  # 150ms (15주기 * 10ms) 미수신 시 heartbeat_ok=False
+# DBC ECU_HEARTBEAT 주기 × 허용 miss 횟수로 파생 (주기 바뀌면 자동 스케일).
+_HB_MISS_TOLERANCE = 15  # design constant — 15주기 miss 까지 허용
+HB_TIMEOUT_SEC = msg("ECU_HEARTBEAT").cycle_time / 1000 * _HB_MISS_TOLERANCE
 
 
-class CanInterface:
+class CanInterface(metaclass=Singleton):
     """
     Raspberry Pi CAN 통신 모듈 (DBC-driven).
 
     사용법:
-        can_mod = CanInterface(channel='can0', bustype='socketcan')
-        can_mod.start()
-        ...
-        can_mod.send_button_input(ButtonInput(btn_acc_off=True, ...))
-        info = can_mod.get_acc_info()
-        ...
-        can_mod.stop()
+        with CanInterface(channel='can0', bustype='socketcan') as can:
+            can.send_button_input(ButtonInput(btn_acc_off=True, ...))
+            info = can.get_acc_info()
+            ...
     """
 
     def __init__(self, channel: str = "can0", bustype: str = "socketcan"):
@@ -160,11 +160,11 @@ class CanInterface:
     # 생명주기
     # =========================================================================
 
-    def start(self) -> None:
+    def __enter__(self) -> "CanInterface":
         """CAN 버스 초기화 + TX/RX/HB 스레드 시작."""
         if self._running:
             logger.warning("CanInterface already running.")
-            return
+            return self
 
         if CAN_AVAILABLE:
             try:
@@ -190,8 +190,9 @@ class CanInterface:
         self._rx_thread.start()
         self._hb_thread.start()
         logger.info("CanInterface started.")
+        return self
 
-    def stop(self) -> None:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """TX/RX/HB 스레드 종료 + CAN 버스 해제."""
         self._running = False
 
@@ -299,22 +300,22 @@ class CanInterface:
 
     def _tx_loop(self) -> None:
         """
-        20ms 주기: VEH_CTRL, SENSOR_FUSION, SENSOR_HEARTBEAT
-        50ms 주기: ACC_CTRL
-        5ms 폴링으로 두 주기 독립 관리.
+        메시지별 DBC cycle_time 으로 독립 스케줄.
+        각 엔트리는 (tx_fn, period_sec) — period 는 DBC GenMsgCycleTime 이 진실의 원천.
         """
-        next_20 = time.monotonic()
-        next_50 = time.monotonic()
+        schedule = [
+            (self._tx_veh_ctrl,         msg("VEH_CTRL").cycle_time / 1000),
+            (self._tx_acc_ctrl,         msg("ACC_CTRL").cycle_time / 1000),
+            (self._tx_sensor_fusion,    msg("SENSOR_FUSION").cycle_time / 1000),
+            (self._tx_sensor_heartbeat, msg("SENSOR_HEARTBEAT").cycle_time / 1000),
+        ]
+        deadlines = [time.monotonic()] * len(schedule)
         while self._running:
             now = time.monotonic()
-            if now >= next_20:
-                self._tx_veh_ctrl()
-                self._tx_sensor_fusion()
-                self._tx_sensor_heartbeat()
-                next_20 += TX_PERIOD_20MS_SEC
-            if now >= next_50:
-                self._tx_acc_ctrl()
-                next_50 += TX_PERIOD_50MS_SEC
+            for i, (tx_fn, period) in enumerate(schedule):
+                if now >= deadlines[i]:
+                    tx_fn()
+                    deadlines[i] += period
             time.sleep(TX_POLL_SEC)
 
     def _tx_veh_ctrl(self) -> None:

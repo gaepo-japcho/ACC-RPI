@@ -16,12 +16,8 @@ from acc_hmi.hmi_gui import gui_main
 
 
 def main() -> int:
-    can = CanInterface()
-    can.start()
-    try:
+    with CanInterface() as can:
         return gui_main(can)
-    finally:
-        can.stop()
 
 
 if __name__ == "__main__":
