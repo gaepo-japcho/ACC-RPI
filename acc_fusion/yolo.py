@@ -29,6 +29,9 @@ class YOLODetector:
         results = self.model(
             frame, conf=self.conf_threshold, device=self.device, verbose=False
         )
+        # 차량 관련 클래스만 필터링 (COCO 기준)
+        VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
+
         detections = []
 
         for result in results:
@@ -37,6 +40,9 @@ class YOLODetector:
                 class_id = int(box.cls[0])
                 confidence = float(box.conf[0])
                 class_name = self.model.names[class_id]
+
+                if class_name not in VEHICLE_CLASSES:
+                    continue
 
                 detections.append(
                     {
