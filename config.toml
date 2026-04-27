@@ -11,6 +11,6 @@ angle_offset = 0.0   # 설치 방향 보정 (도)
 reverse = false      # 뒤집어 설치한 경우 true
 
 [yolo]
-model_path = "acc_fusion/yolo26n.pt"
+model_path = "/usr/share/hailo-models/yolov6n_h8l.hef"
 conf_threshold = 0.5
-device = "cpu"
+device = "npu"
