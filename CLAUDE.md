@@ -7,9 +7,9 @@
 ```
 ACC-RPI/
 ├── main.py                     # ★ 진짜 진입점 아님 — 모듈 import 만 하는 스텁
-├── pyproject.toml              # uv 기반 의존성 (Python >= 3.14)
+├── pyproject.toml              # uv 기반 의존성 (Python >= 3.13)
 ├── uv.lock
-├── .python-version             # "3.14"
+├── .python-version             # "3.13"
 ├── config.toml                 # camera/lidar/yolo 하드웨어 파라미터
 ├── README.md
 │
@@ -107,7 +107,7 @@ uv run python acc_hmi/main.py   # 시뮬레이션 모드로 GUI 실행
 
 - **`camera.py`** — `CameraReader` (Singleton). `config.toml [camera]` 의 source/width/height/fps 로드. `read()` → `CameraFrame`.
 - **`lidar.py`** — `LidarReader` (Singleton, `rplidar` 사용). `config.toml [lidar]` 의 port/baudrate/angle_offset. `scan()` → `LidarScan`.
-- **`yolo.py`** — `YOLODetector`. `config.toml [yolo]` 의 model_path/conf_threshold. YOLO v26 pretrained (ultralytics).
+- **`yolo.py`** — `YOLODetector`. `config.toml [yolo]` 의 model_path/conf_threshold/device. YOLOv6n COCO pretrained, Hailo NPU 추론 (HailoRT, `.hef` 모델). 외부 API 는 ultralytics 시절과 동일.
 - **`__init__.py`** — `Fusion` 클래스 (Singleton). 세 센서를 조합해 `FusionData` 산출. 이를 `CanInterface.update_fusion_data()` 로 acc_can 에 전달.
 
 **MRR-30 LiDAR 스펙**: `../ACC-docs/refs/20220901 MRR-30 User Manual & Cert List_00.pdf` 참조.
@@ -145,7 +145,7 @@ can.start()  # 실 CAN 버스 연결 시도 → 실패 시 자동 simulation fal
 
 - **한국어 주석 유지** — UI 라벨·변수 주석·docstring 이 대부분 한국어. 보존.
 - **시뮬레이터 ↔ 실제 ECU 분리** — `acc_state.py` 의 상태 전이는 standalone GUI 용. 실제 동작은 MPC5606B 가 결정. 전이 규칙 변경 시 `../ACC-autosar/mbd/AccStateMachine/` 와 `../ACC-docs/reqs/` 도 함께 수정.
-- **Python 3.14 prerelease** — `uv` 가 자동 관리. 시스템 파이썬 의존 금지.
+- **Python 3.13** — `uv` 가 자동 관리. hailo_platform 이 cp313 ABI 휠만 제공해 3.14+ 사용 불가. picamera2/PyQt5 는 pip 설치가 어려워 시스템 site-packages 에서 로드 (`.venv/pyvenv.cfg` 의 `include-system-site-packages = true`).
 - **CAN 코드 수정 시 3 원칙**:
   1. **ID/레이아웃 하드코딩 금지** — `_dbc` / `_codec` 경유
   2. **범위 clamp 는 DBC 기준** — `acc_can/__init__.py` 의 `send_*` 가 DBC 시그널 범위로 max/min
