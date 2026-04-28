@@ -8,7 +8,7 @@ hfov = 75         # 수평 시야각 (도) — Pi Camera Module 3 기준
 [lidar]
 port = "/dev/ttyUSB0"
 baudrate = 115200
-angle_offset = 0.0   # 설치 방향 보정 (도)
+angle_offset = 237.54   # 설치 방향 보정 (도) — raw 122.5° (벽 정면 클러스터) → 0° (정면)
 reverse = false      # 뒤집어 설치한 경우 true
 
 [yolo]
