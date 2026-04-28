@@ -194,7 +194,7 @@ class YOLODetector:
     def from_config(cls) -> "YOLODetector":
         from common import config
 
-        c = config.config["yolo"] if hasattr(config, "config") else config["yolo"]
+        c = config["yolo"]
         return cls(
             model_path=c["model_path"],
             conf_threshold=c["conf_threshold"],
