@@ -36,10 +36,12 @@ class LidarReader(metaclass=Singleton):
         self.reverse = reverse
 
         self._lidar: _RPLidar | None = None
+        self._iterator = None
         self._scan_id = 0
 
     def open(self) -> None:
         self._lidar = _RPLidar(self.port, self.baudrate)
+        self._iterator = self._lidar.iter_scans()
         log.info(f"LiDAR 연결: port={self.port} baudrate={self.baudrate}")
 
     def _to_array(self, scan) -> np.ndarray:
@@ -58,16 +60,17 @@ class LidarReader(metaclass=Singleton):
 
     def raw_read(self) -> LidarScan | None:
         """가공 없이 센서 원본값 그대로 반환"""
-        if self._lidar is None:
+        if self._iterator is None:
             return None
 
-        for scan in self._lidar.iter_scans():
-            arr = self._to_array(scan)
-            self._scan_id += 1
-            log.debug(f"LiDAR raw scan_id={self._scan_id} points={len(arr)}")
-            return LidarScan(points=arr, timestamp=time.time(), scan_id=self._scan_id)
+        scan = next(self._iterator, None)
+        if scan is None:
+            return None
 
-        return None
+        arr = self._to_array(scan)
+        self._scan_id += 1
+        log.debug(f"LiDAR raw scan_id={self._scan_id} points={len(arr)}")
+        return LidarScan(points=arr, timestamp=time.time(), scan_id=self._scan_id)
 
     def read(self) -> LidarScan | None:
         """angle_offset, reverse 적용 후 반환"""
@@ -82,6 +85,7 @@ class LidarReader(metaclass=Singleton):
 
     def close(self):
         if self._lidar is not None:
+            self._iterator = None
             self._lidar.stop()
             self._lidar.disconnect()
             self._lidar = None
