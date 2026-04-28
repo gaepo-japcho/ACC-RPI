@@ -5,7 +5,7 @@ import threading
 import numpy as np
 
 from common.singleton import Singleton
-from common import get_logger
+from common import get_logger, config
 from interfaces.fusion_data import FusionData
 from acc_can import CanInterface
 from acc_can._dbc import msg
@@ -14,9 +14,13 @@ log = get_logger(__name__)
 
 __all__ = ["FusionData", "Fusion"]
 
-_FRONT_ANGLE_DEG = 30  # 전방으로 인정할 좌우 범위 (±30°)
 # SENSOR_FUSION TX 주기에 맞춰 push (DBC GenMsgCycleTime).
 _PUSH_PERIOD_SEC = msg("SENSOR_FUSION").cycle_time / 1000
+
+# LiDAR 노이즈/outlier 필터
+_LIDAR_MIN_VALID_MM = 100      # 이 이하 거리는 센서 본체/케이블 반사로 간주, 제거
+_LIDAR_MIN_VALID_POINTS = 3    # 이 미만이면 신뢰 불가 — 거리 0 으로 보고
+_LIDAR_DIST_PERCENTILE = 5     # outlier 회피용 하위 분위수 (np.min 대신)
 
 
 class Fusion(metaclass=Singleton):
@@ -29,6 +33,7 @@ class Fusion(metaclass=Singleton):
         self._cam = CameraReader.from_config()
         self._lidar = LidarReader.from_config()
         self._detector = YOLODetector.from_config()
+        self._cam_hfov = float(config["camera"]["hfov"])
 
         self._latest_vehicles: list[dict] = []
         self._latest_scan: LidarScan | None = None
@@ -105,9 +110,21 @@ class Fusion(metaclass=Singleton):
         while not self._stop_event.wait(_PUSH_PERIOD_SEC):
             self._can.update_fusion_data(self.update())
 
+    def _pixel_to_angle(self, x: float) -> float:
+        """카메라 픽셀 x → 각도 (도, 화면 중심=0°, 우측=+).
+
+        HFOV 안에서 선형 매핑 — 광각 왜곡 보정은 안 함 (FOV 75°까지는 충분히 선형).
+        """
+        return (x - self._cam.width / 2.0) / self._cam.width * self._cam_hfov
+
     def update(self) -> FusionData:
         """
         최신 카메라/LiDAR 상태로부터 전방 차량 FusionData 산출.
+
+        알고리즘:
+            1. YOLO bbox 의 좌우 픽셀 → 카메라 HFOV 기반 각도 범위
+            2. 그 각도 범위에 들어오는 LiDAR 점만 거리 후보
+            3. 차량 여러 대면 모든 bbox 마스크의 union → 그 중 최솟값
 
         return:
             FusionData:
@@ -127,15 +144,34 @@ class Fusion(metaclass=Singleton):
             log.debug("전방 차량 감지, LiDAR 데이터 없음")
             return FusionData(detected=True, distance=0)
 
-        angles = scan.points[:, 0]
-        front_mask = (angles <= _FRONT_ANGLE_DEG) | (angles >= 360 - _FRONT_ANGLE_DEG)
-        front_points = scan.points[front_mask]
+        # bbox 마다 각도 범위 (signed) 계산 → LiDAR 좌표 (0~360) 로 변환 → mask union
+        angles = scan.points[:, 0]  # 0~360, lidar.py 의 angle_offset 적용된 값
+        mask = np.zeros(len(angles), dtype=bool)
+        for v in vehicles:
+            x1, _, x2, _ = v["bbox"]
+            a_left = self._pixel_to_angle(x1) % 360.0
+            a_right = self._pixel_to_angle(x2) % 360.0
+            # bbox 가 정면(0°) 을 포함하면 a_left > a_right (예: 350° ~ 10°)
+            if a_left <= a_right:
+                mask |= (angles >= a_left) & (angles <= a_right)
+            else:
+                mask |= (angles >= a_left) | (angles <= a_right)
 
-        if len(front_points) == 0:
-            log.debug("전방 차량 감지, 전방 LiDAR 포인트 없음")
+        bbox_points = scan.points[mask]
+        # 센서 노이즈 (본체/케이블 반사 등) 제거
+        valid = bbox_points[bbox_points[:, 1] >= _LIDAR_MIN_VALID_MM]
+        if len(valid) < _LIDAR_MIN_VALID_POINTS:
+            log.debug(
+                f"전방 차량 감지, bbox 유효 점 부족: "
+                f"{len(valid)}/{_LIDAR_MIN_VALID_POINTS}"
+            )
             return FusionData(detected=True, distance=0)
 
         # lidar.py 가 [angle_deg, distance_mm] 컬럼으로 반환 (RPLiDAR raw=mm).
-        distance_mm = int(np.min(front_points[:, 1]))
-        log.debug(f"전방 차량 감지: distance={distance_mm}mm")
+        # np.min 은 노이즈 한 점에 거리 결정됨 → percentile 로 outlier 강건성 확보.
+        distance_mm = int(np.percentile(valid[:, 1], _LIDAR_DIST_PERCENTILE))
+        log.debug(
+            f"전방 차량 감지: vehicles={len(vehicles)} "
+            f"bbox점={len(bbox_points)} 유효={len(valid)} distance={distance_mm}mm"
+        )
         return FusionData(detected=True, distance=distance_mm)
