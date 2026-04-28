@@ -14,7 +14,6 @@ log = get_logger(__name__)
 
 __all__ = ["FusionData", "Fusion"]
 
-_VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 _FRONT_ANGLE_DEG = 30  # 전방으로 인정할 좌우 범위 (±30°)
 # SENSOR_FUSION TX 주기에 맞춰 push (DBC GenMsgCycleTime).
 _PUSH_PERIOD_SEC = msg("SENSOR_FUSION").cycle_time / 1000
@@ -88,8 +87,7 @@ class Fusion(metaclass=Singleton):
             if frame is None:
                 log.warning("카메라 워커: 프레임 읽기 실패")
                 continue
-            detections = self._detector.detect(frame.image)
-            vehicles = [d for d in detections if d["class_name"] in _VEHICLE_CLASSES]
+            vehicles = self._detector.detect(frame.image)
             with self._vehicles_lock:
                 self._latest_vehicles = vehicles
 

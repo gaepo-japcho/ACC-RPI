@@ -3,6 +3,7 @@ source = 0        # 카메라 인덱스 또는 파일 경로
 width = 640
 height = 480
 fps = 30
+hfov = 75         # 수평 시야각 (도) — Pi Camera Module 3 기준
 
 [lidar]
 port = "/dev/ttyUSB0"
