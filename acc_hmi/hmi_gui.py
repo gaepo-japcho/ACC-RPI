@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
 from PyQt5.QtGui import (
     QFont, QFontDatabase, QColor, QPalette, QPainter, QPen, QBrush,
-    QConicalGradient,
+    QConicalGradient, QImage, QPixmap,
 )
 
 from interfaces.acc_status import AccStatus
@@ -796,10 +796,44 @@ class HmiWindow(QMainWindow):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  YOLO Debug Preview (PyQt5)
+# ═══════════════════════════════════════════════════════════════
+
+class YoloPreview(QWidget):
+    """Fusion 의 annotated 프레임을 30Hz 로 폴링해 표시하는 디버그 창."""
+
+    def __init__(self, fusion):
+        super().__init__()
+        self._fusion = fusion
+        self.setWindowTitle("YOLO Debug")
+        self.setStyleSheet(f"background-color: {BG};")
+        self._label = QLabel("waiting for frame…")
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet(f"color: {TEXT};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._label)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(66)  # ~15Hz — 메인 스레드 부하 ↓ (버튼 이벤트 우선순위)
+
+    def _refresh(self) -> None:
+        frame = self._fusion.get_annotated_frame()
+        if frame is None:
+            return
+        # Picamera2 RGB888 = QImage Format_RGB888 그대로 사용 가능
+        h, w, _ = frame.shape
+        img = QImage(frame.data, w, h, w * 3, QImage.Format_RGB888)
+        # QImage 가 numpy 버퍼를 참조하므로 copy() 로 소유권 이전
+        self._label.setPixmap(QPixmap.fromImage(img.copy()))
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Entry Point
 # ═══════════════════════════════════════════════════════════════
 
-def gui_main(can_interface):
+def gui_main(can_interface, fusion=None):
     """QApplication 을 띄우고 HMI 윈도우를 주입된 `can_interface` 로 실행."""
     # opencv-python 휠은 import 시 QT_QPA_PLATFORM_PLUGIN_PATH 를 자기 디렉토리(cv2/qt/plugins)로
     # 덮어쓴다. 거기 들어있는 vendored Qt5 는 시스템 PyQt5 와 ABI 가 안 맞아 xcb 로드가 실패하므로,
@@ -825,4 +859,11 @@ def gui_main(can_interface):
 
     win = HmiWindow(can_interface)
     win.showFullScreen()
+
+    preview = None
+    if fusion is not None and fusion.show_window:
+        preview = YoloPreview(fusion)
+        preview.resize(640, 480)
+        preview.show()
+
     return app.exec_()
