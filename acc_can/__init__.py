@@ -14,7 +14,7 @@ ACC Project - Raspberry Pi CAN Interface Module
   __init__.py — CanInterface 클래스 (스레딩 + 상태 + 공개 API)
 
 CAN 메시지 (DBC 2026-04-23 기준):
-  TX (SENSOR → ECU):
+  TX (SENSOR → ECU): socketcan BCM cyclic 으로 커널 위임 — Python 은 payload 갱신만.
     0x110 SENSOR_FUSION     전방차량 감지/거리    20ms
     0x111 SENSOR_HEARTBEAT  RPi HB/ERR            20ms
     0x120 VEH_CTRL          brake + accel_pwm     20ms  (SYS006/007, SAF004/015)
@@ -156,6 +156,10 @@ class CanInterface(metaclass=Singleton):
         self._rx_thread: Optional[threading.Thread] = None
         self._hb_thread: Optional[threading.Thread] = None
 
+        # ── BCM cyclic TX tasks (msg_id → CyclicSendTask) ────────────────────
+        # __enter__ 에서 등록, __exit__ 에서 stop. 실 송신은 커널 BCM 이 담당.
+        self._tx_tasks: dict[int, object] = {}
+
     # =========================================================================
     # 생명주기
     # =========================================================================
@@ -182,6 +186,9 @@ class CanInterface(metaclass=Singleton):
         self._running = True
         self._hb_last_rx = time.time()
 
+        if self._bus is not None and not self._tx_tasks:
+            self._setup_cyclic_tasks()
+
         self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True, name="CAN_TX")
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True, name="CAN_RX")
         self._hb_thread = threading.Thread(target=self._hb_watchdog, daemon=True, name="CAN_HB")
@@ -193,12 +200,20 @@ class CanInterface(metaclass=Singleton):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """TX/RX/HB 스레드 종료 + CAN 버스 해제."""
+        """TX/RX/HB 스레드 종료 + cyclic task 해제 + CAN 버스 해제."""
         self._running = False
 
         for t in (self._tx_thread, self._rx_thread, self._hb_thread):
             if t and t.is_alive():
                 t.join(timeout=1.0)
+
+        # cyclic 송신 정리 — bus.shutdown() 보다 먼저 (BCM_CMD_TX_DELETE)
+        for msg_id, task in self._tx_tasks.items():
+            try:
+                task.stop()
+            except Exception as e:
+                logger.warning(f"cyclic stop error (0x{msg_id:03X}): {e}")
+        self._tx_tasks.clear()
 
         if self._bus:
             try:
@@ -298,10 +313,47 @@ class CanInterface(metaclass=Singleton):
     # 내부: TX 루프 (multi-rate: 20ms + 50ms)
     # =========================================================================
 
+    def _setup_cyclic_tasks(self) -> None:
+        """
+        BCM cyclic 송신 등록 (socketcan 커널이 주기 송신 담당).
+
+        bus.send() 를 매 주기 호출하면 ACK 대기로 syscall 이 ms 단위로 블로킹되며
+        GIL 점유 → HMI/Fusion 스레드 굼떠짐. send_periodic 은 BCM_CMD_TX_SETUP 으로
+        커널에 한 번만 등록하고 이후 task.modify_data() 로 payload 갱신만 한다.
+
+        참고: ACK 못 받아 ENOBUFS 나는 시점이 오히려 빨랐던 이유 — send() 가 즉시
+        에러 throw 하고 except 빠져서 GIL 풀렸기 때문 (정상 송신이 더 무거웠던 것).
+        """
+        initial = [
+            (MSG_ID_VEH_CTRL,
+             _codec.encode_veh_ctrl(self._pedal_input),
+             msg("VEH_CTRL").cycle_time / 1000),
+            (MSG_ID_ACC_CTRL,
+             _codec.encode_acc_ctrl(self._button_input, self._acc_setting),
+             msg("ACC_CTRL").cycle_time / 1000),
+            (MSG_ID_SENSOR_FUSION,
+             _codec.encode_sensor_fusion(self._fusion_data),
+             msg("SENSOR_FUSION").cycle_time / 1000),
+            (MSG_ID_SENSOR_HEARTBEAT,
+             _codec.encode_sensor_heartbeat(0, 0),
+             msg("SENSOR_HEARTBEAT").cycle_time / 1000),
+        ]
+        for msg_id, data, period in initial:
+            try:
+                m = can.Message(arbitration_id=msg_id, data=data, is_extended_id=False)
+                self._tx_tasks[msg_id] = self._bus.send_periodic(m, period)
+                logger.info(
+                    f"cyclic registered: 0x{msg_id:03X} @ {period*1000:.0f}ms"
+                )
+            except Exception as e:
+                logger.error(f"send_periodic setup failed (0x{msg_id:03X}): {e}")
+
     def _tx_loop(self) -> None:
         """
         메시지별 DBC cycle_time 으로 독립 스케줄.
         각 엔트리는 (tx_fn, period_sec) — period 는 DBC GenMsgCycleTime 이 진실의 원천.
+
+        실 송신은 커널 BCM 이 담당 — 워커는 task.modify_data() 로 payload 만 갱신.
         """
         schedule = [
             (self._tx_veh_ctrl,         msg("VEH_CTRL").cycle_time / 1000),
@@ -456,16 +508,25 @@ class CanInterface(metaclass=Singleton):
     # =========================================================================
 
     def _send_raw(self, msg_id: int, data: bytes) -> None:
-        """CAN 메시지 송신. 버스 미연결 시 시뮬레이션 로그만 출력."""
-        if self._bus is None:
+        """
+        Cyclic task payload 갱신. 실 송신은 커널 BCM (socketcan) 이 자동 주기 송신.
+        이름은 호환성 위해 유지 — 동작은 BCM_CMD_TX_SETUP 으로 payload 만 update.
+
+        bus.send() 를 매 사이클 호출하면 정상 ACK 시 syscall 이 ms 단위로 GIL 잡고
+        들어가서 HMI/Fusion 스레드가 굼떠짐. cyclic 으로 위임하면 송신 자체가
+        Python 컨텍스트 밖으로 빠져 GIL 부담이 사라진다.
+        시뮬 모드 / setup 실패 시엔 task 가 None → 디버그 로그만.
+        """
+        task = self._tx_tasks.get(msg_id)
+        if task is None:
             logger.debug(f"[SIM] TX 0x{msg_id:03X}: {data.hex()}")
             return
         try:
-            msg = can.Message(
+            m = can.Message(
                 arbitration_id=msg_id,
                 data=data,
                 is_extended_id=False,  # 표준 CAN 11-bit
             )
-            self._bus.send(msg)
+            task.modify_data(m)
         except Exception as e:
-            logger.error(f"CAN TX error (0x{msg_id:03X}): {e}")
+            logger.error(f"CAN modify_data error (0x{msg_id:03X}): {e}")
