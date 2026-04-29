@@ -41,9 +41,14 @@ class CameraReader(metaclass=Singleton):
         try:
             from picamera2 import Picamera2
             self._cam = Picamera2()
+            # FrameDurationLimits 가 fps 의 진실의 원천 (us 단위, min/max 동일값으로 고정).
+            # config.toml 의 fps 인자는 여기로 전달 — sensor 가 cap 을 무시하면 detect/yolo
+            # 로그가 cap 보다 높게 찍히므로 적용 후 확인 필요.
+            frame_duration_us = int(1_000_000 / self.fps)
             config = self._cam.create_preview_configuration(
                 main={"size": (self.width, self.height), "format": "RGB888"},
                 buffer_count=2,
+                controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
             )
             self._cam.configure(config)
             self._cam.start()
