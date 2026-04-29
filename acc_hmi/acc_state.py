@@ -56,10 +56,12 @@ BUTTON_AVAILABILITY: dict[AccStatus, dict[str, bool]] = {
 
 
 # 1/10 스케일카 속도 파라미터 (단위: cm/s, SYS032 / STK024 / SWR031)
-MIN_SET_SPEED_CMS = 5         # 최소 설정 속도 (SWR031)
-MAX_SET_SPEED_CMS = 500       # DBC SET_ACC_SPD int16 상한 (-500~500 cm/s)
+# ECU AccStateMachine.c 의 SET_SPEED_MIN_CMS=30 / SET_SPEED_MAX_CMS=300 와 정합 —
+# 어긋나면 HMI 표시값과 ECU clamp 결과가 달라져 SPD+/- 가 동작 안 하는 것처럼 보임.
+MIN_SET_SPEED_CMS = 30        # SWR031 최소 설정 속도 (ECU SET_SPEED_MIN_CMS 정합)
+MAX_SET_SPEED_CMS = 300       # 스케일카 최대 3.0 m/s (ECU SET_SPEED_MAX_CMS 정합)
 SPEED_INCREMENT_CMS = 1       # SPD+/- 클릭당 증감량
-SPEED_GAUGE_MAX_CMS = 500     # 속도 게이지 최대 눈금 (DBC GET_ACC_SPD int16 상한 일치)
+SPEED_GAUGE_MAX_CMS = 300     # 속도 게이지 최대 눈금 (MAX_SET_SPEED_CMS 와 일치)
 DEFAULT_DISTANCE_LEVEL = 3    # 기본 거리 단계 (SYS034)
 
 
