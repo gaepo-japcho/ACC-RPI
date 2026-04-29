@@ -253,7 +253,8 @@ class HmiWindow(QMainWindow):
         # 액셀 페달 인가 중에도 ACC ON 가능 — ECU 가 SET_ACC_SPD=0 을 보고 ON 거부하는 현상 방지.
         # send_acc_setting + send_button_input 은 같은 _tx_acc_ctrl(50ms) 프레임에 실린다.
         status = status_from_int(self._can.get_acc_info().status)
-        if status == AccStatus.OFF:
+        was_off = (status == AccStatus.OFF)
+        if was_off:
             captured = self._capture_current_speed()
             self._can.send_acc_setting(AccSetting(
                 set_speed=captured, distance_level=self._last_distance_level,
@@ -262,6 +263,12 @@ class HmiWindow(QMainWindow):
         self._can.send_button_input(ButtonInput(
             btn_acc_off=True, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=None,
         ))
+        if was_off:
+            # ECU 가 ACC 버튼 edge + 현재 PWM 을 처리할 수 있도록 윈도우를 준 뒤 사용자 PWM 0 리셋.
+            # 미적용 시: VEH_CTRL(20ms) 로 user accel_pwm 이 계속 송신되어 ECU 가 운전자 override
+            # 로 보고 throttle 인계를 거부 → ACC 가 캡처한 속도로 주행하지 못함.
+            # _on_set 과 동일 패턴.
+            QTimer.singleShot(120, self._reset_user_pwm)
 
     def _on_cancel(self):
         self._can.send_button_input(ButtonInput(
