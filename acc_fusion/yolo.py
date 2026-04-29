@@ -43,13 +43,18 @@ class YOLODetector:
         model_path: str = "/usr/share/hailo-models/yolov6n_h8l.hef",
         conf_threshold: float = 0.5,
         device: str = "npu",
+        show_window: bool = False,
     ):
-        log.info(f"YOLO NPU 모델 로드: {model_path} (conf={conf_threshold})")
+        log.info(
+            f"YOLO NPU 모델 로드: {model_path} "
+            f"(conf={conf_threshold}, show_window={show_window})"
+        )
         if device != "npu":
             log.warning(f"device='{device}' 무시 — NPU 고정")
 
         self.conf_threshold = conf_threshold
         self.device = "npu"
+        self.show_window = show_window
 
         self._hef = HEF(model_path)
         self._vdevice = VDevice()
@@ -71,9 +76,15 @@ class YOLODetector:
         self._input_h, self._input_w, _ = input_info.shape
         self.names = {i: n for i, n in enumerate(COCO_NAMES)}
 
-        # 인스턴스 수명 동안 활성화 유지 — close() 에서 해제
+        # 인스턴스 수명 동안 활성화 + vstream pipeline 유지 — close() 에서 해제.
+        # InferVStreams 를 매 detect() 마다 새로 만들면 NPU vstream open/close 비용이
+        # 추론보다 커져 30fps 입력에서 GUI 가 렉 걸린다.
         self._activation = self._network_group.activate(self._network_group_params)
         self._activation.__enter__()
+        self._infer_pipeline = InferVStreams(
+            self._network_group, self._input_params, self._output_params
+        )
+        self._infer_pipeline.__enter__()
 
         log.info(
             f"YOLO NPU 모델 로드 완료 (input={self._input_w}x{self._input_h})"
@@ -102,10 +113,7 @@ class YOLODetector:
         )
         input_data = {self._input_name: np.expand_dims(input_tensor, axis=0)}
 
-        with InferVStreams(
-            self._network_group, self._input_params, self._output_params
-        ) as infer_pipeline:
-            results = infer_pipeline.infer(input_data)
+        results = self._infer_pipeline.infer(input_data)
 
         # 출력: list[batch=1] of list[80 classes] of np.ndarray (N, 5).
         # 각 행: [y_min, x_min, y_max, x_max, score] (정규화 0~1)
@@ -151,7 +159,6 @@ class YOLODetector:
                     }
                 )
 
-        log.debug(f"감지 결과: {len(detections)}개 객체")
         return detections
 
     @staticmethod
@@ -173,7 +180,13 @@ class YOLODetector:
     def close(self):
         """NPU 리소스 해제."""
         try:
-            if self._activation is not None:
+            if getattr(self, "_infer_pipeline", None) is not None:
+                self._infer_pipeline.__exit__(None, None, None)
+                self._infer_pipeline = None
+        except Exception as e:
+            log.warning(f"NPU vstream 해제 실패: {e}")
+        try:
+            if getattr(self, "_activation", None) is not None:
                 self._activation.__exit__(None, None, None)
                 self._activation = None
         except Exception as e:
@@ -199,7 +212,9 @@ class YOLODetector:
             model_path=c["model_path"],
             conf_threshold=c["conf_threshold"],
             device=c.get("device", "npu"),
+            show_window=c.get("show_window", False),
         )
+
 
     def draw(self, frame: np.ndarray, detections: list[dict]) -> np.ndarray:
         """감지 결과를 프레임에 시각화합니다."""

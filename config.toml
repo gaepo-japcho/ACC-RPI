@@ -12,6 +12,7 @@ angle_offset = 0.0   # 설치 방향 보정 (도)
 reverse = false      # 뒤집어 설치한 경우 true
 
 [yolo]
-model_path = "/usr/share/hailo-models/yolov6n_h8l.hef"
-conf_threshold = 0.5
+model_path = "/usr/share/hailo-models/yolov8s_h8l.hef"
+conf_threshold = 0.4
 device = "npu"
+show_window = false   # 디버그용 — cv2.imshow 로 감지 결과 시각화 (false 로 끄면 오버헤드 0)

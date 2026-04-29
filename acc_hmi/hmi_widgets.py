@@ -227,6 +227,15 @@ class _VPedalSlider(QWidget):
         if self._dragging: self.setValue(self._y_to_val(e.y()))
     def mouseReleaseEvent(self, e): self._dragging = False
 
+    def wheelEvent(self, e):
+        # 휠 스크롤로 값 조절: 위=증가, 아래=감소 (1 notch = 20%, 다중 notch 누적).
+        dy = e.angleDelta().y()
+        if dy == 0:
+            e.ignore(); return
+        notches = max(1, abs(dy) // 120)
+        self.setValue(self._value + (20 * notches if dy > 0 else -20 * notches))
+        e.accept()
+
 
 class PedalStrip(QFrame):
     """세로 슬라이더 페달 (액셀용)."""
@@ -252,6 +261,10 @@ class PedalStrip(QFrame):
         layout.addWidget(self._slider, stretch=1, alignment=Qt.AlignHCenter)
 
     def set_callback(self, fn): self._callback = fn
+
+    def wheelEvent(self, e):
+        # 슬라이더 외부(라벨/% 영역) 휠 입력도 슬라이더로 전달.
+        self._slider.wheelEvent(e)
 
     def _on_change(self, val):
         self._pct.setText(f"{val}%")

@@ -71,7 +71,7 @@ BUTTON_AVAILABILITY: dict[AccStatus, dict[str, bool]] = {
 MIN_SET_SPEED_CMS = 5         # 최소 설정 속도 (SWR031)
 MAX_SET_SPEED_CMS = 500       # DBC SET_ACC_SPD int16 상한 (-500~500 cm/s)
 DEFAULT_SET_SPEED_CMS = 30    # ACC OFF 전이 시 목표속도 기본값으로 리셋
-SPEED_INCREMENT_CMS = 1       # SPD+/- 클릭당 증감량
+SPEED_INCREMENT_CMS = 10      # SPD+/- 클릭당 증감량 (cm/s)
 SPEED_GAUGE_MAX_CMS = 500     # 속도 게이지 최대 눈금 (DBC GET_ACC_SPD int16 상한 일치)
 DEFAULT_DISTANCE_LEVEL = 3    # 기본 거리 단계 (SYS034)
 

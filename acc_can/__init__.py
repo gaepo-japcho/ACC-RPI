@@ -441,15 +441,23 @@ class CanInterface(metaclass=Singleton):
     # =========================================================================
 
     def _hb_watchdog(self) -> None:
-        """50ms 간격으로 마지막 HB 수신 시각 확인 → heartbeat_ok 갱신."""
+        """50ms 간격으로 마지막 HB 수신 시각 확인 → heartbeat_ok 갱신.
+
+        Edge-triggered 로그 — OK↔FAIL 전이 순간만 찍어 콘솔 도배 방지.
+        """
+        prev_ok: bool | None = None
         while self._running:
             time.sleep(0.05)
             now = time.time()
             with self._lock:
                 ok = (now - self._hb_last_rx) < HB_TIMEOUT_SEC
                 self._ecu_status.heartbeat_ok = ok
-            if not ok:
-                logger.warning("ECU Heartbeat timeout!")
+            if ok != prev_ok:
+                if not ok:
+                    logger.warning("ECU Heartbeat timeout!")
+                elif prev_ok is False:
+                    logger.info("ECU Heartbeat 복구")
+                prev_ok = ok
 
     # =========================================================================
     # 내부: CAN 송신 헬퍼

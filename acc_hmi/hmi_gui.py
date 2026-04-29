@@ -250,13 +250,14 @@ class HmiWindow(QMainWindow):
 
     def _on_acc_toggle(self):
         # OFF ↔ ON 전이를 동일 ACC_CTRL(50ms) 프레임에 set_speed 와 함께 실어 보낸다.
-        # OFF → ON: 자차 현재 속도를 목표 속도로 캡처 (액셀 인가 중에도 ON 허용 — ECU 가
-        #          SET_ACC_SPD=0 을 보고 ON 거부하는 현상 방지).
+        # OFF → ON (= STANDBY): 자차 현재 속도를 목표 속도로 캡처 (액셀 인가 중에도 ON 허용 —
+        #          ECU 가 SET_ACC_SPD=0 을 보고 ON 거부하는 현상 방지).
         # ON → OFF: 목표 속도를 DEFAULT_SET_SPEED_CMS 로 리셋. 미리셋 시 다음 ON 때
         #          ECU 가 이전 목표 속도를 그대로 사용해 의도치 않은 속도로 주행하는 현상 방지.
+        # PWM 은 어떤 버튼에서도 리셋하지 않는다 — 사용자 페달 입력이 항상 우선.
+        # (브레이크 인가 시에만 안전상 강제 0 — _on_brake 참조)
         status = status_from_int(self._can.get_acc_info().status)
-        was_off = (status == AccStatus.OFF)
-        if was_off:
+        if status == AccStatus.OFF:
             captured = self._capture_current_speed()
             self._can.send_acc_setting(AccSetting(
                 set_speed=captured, distance_level=self._last_distance_level,
@@ -270,12 +271,6 @@ class HmiWindow(QMainWindow):
         self._can.send_button_input(ButtonInput(
             btn_acc_off=True, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=None,
         ))
-        if was_off:
-            # ECU 가 ACC 버튼 edge + 현재 PWM 을 처리할 수 있도록 윈도우를 준 뒤 사용자 PWM 0 리셋.
-            # 미적용 시: VEH_CTRL(20ms) 로 user accel_pwm 이 계속 송신되어 ECU 가 운전자 override
-            # 로 보고 throttle 인계를 거부 → ACC 가 캡처한 속도로 주행하지 못함.
-            # _on_set 과 동일 패턴.
-            QTimer.singleShot(120, self._reset_user_pwm)
 
     def _on_cancel(self):
         self._can.send_button_input(ButtonInput(
@@ -294,9 +289,6 @@ class HmiWindow(QMainWindow):
         self._can.send_button_input(ButtonInput(
             btn_acc_off=None, btn_acc_set=True, btn_acc_res=None, btn_acc_cancel=None,
         ))
-        # SET edge 와 함께 ECU 가 현재 PWM 을 캡처할 수 있도록 약간의 윈도우를 준 뒤 PWM 0 리셋.
-        # (TX 주기: ACC_CTRL 50ms / VEH_CTRL 20ms — ECU 가 SET edge 를 처리할 때까지 PWM 유지)
-        QTimer.singleShot(120, self._reset_user_pwm)
 
     def _capture_current_speed(self) -> int:
         """현재 자차 속도(cm/s) → ACC 목표 속도. [MIN, MAX] 범위로 clamp."""
@@ -346,17 +338,15 @@ class HmiWindow(QMainWindow):
             brake=self._brake_pressed, accel_pwm=self._accel_pwm,
         ))
 
-    def _reset_user_pwm(self):
-        """SET 후 사용자 PWM 을 0 으로 되돌림. ACC 가 throttle 제어 인계 받은 시점."""
-        self._accel_pwm = 0
-        self.throttle_strip.reset_to_zero()
-        self._can.send_pedal_input(PedalInput(
-            brake=self._brake_pressed, accel_pwm=self._accel_pwm,
-        ))
-
     # ════════════════════════════════════════════════════════════
     #  Window events
     # ════════════════════════════════════════════════════════════
+
+    def wheelEvent(self, e):
+        # 윈도우 내 어디서든 휠 스크롤 → 액셀 페달로 위임 (커서 위치 무관).
+        # 자식 위젯(버튼/게이지/프레임)은 휠을 ignore 해서 여기까지 버블업되고,
+        # PedalStrip 위에선 자체 wheelEvent 가 먼저 accept 하므로 이중 처리는 없다.
+        self.throttle_strip.wheelEvent(e)
 
     def keyPressEvent(self, e):
         # F11 / Ctrl+Enter — 전체화면 토글 (양방향)

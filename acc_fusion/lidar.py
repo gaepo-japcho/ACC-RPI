@@ -41,6 +41,14 @@ class LidarReader(metaclass=Singleton):
 
     def open(self) -> None:
         self._lidar = _RPLidar(self.port, self.baudrate)
+        # rplidar 0.9.x 버그 우회: 직전 실행이 비정상 종료되어 센서가 스캐닝 상태로
+        # 남아 있으면 시리얼 버퍼에 데이터가 쌓이고, iter_scans() → start() → get_health() 가
+        # (status, error_code) 튜플 대신 에러 메시지 문자열을 반환해
+        # "too many values to unpack" 으로 죽는다. STOP + flush 로 클린 상태 강제.
+        try:
+            self._lidar.stop()
+        except Exception as e:
+            log.debug(f"LiDAR open() 사전 stop 실패 (무시): {e}")
         self._iterator = self._lidar.iter_scans()
         log.info(f"LiDAR 연결: port={self.port} baudrate={self.baudrate}")
 
