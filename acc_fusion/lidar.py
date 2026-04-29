@@ -45,15 +45,22 @@ class LidarReader(metaclass=Singleton):
         log.info(f"LiDAR 연결: port={self.port} baudrate={self.baudrate}")
 
     def _to_array(self, scan) -> np.ndarray:
-        return np.array(
-            [[angle, distance] for _, angle, distance in scan], dtype=np.float32
-        )
+        # rplidar iter_scans 는 (quality, angle, distance) 튜플 리스트 반환.
+        # Python list comprehension 대신 np.asarray 한방으로 C loop 활용.
+        if not scan:
+            return np.empty((0, 2), dtype=np.float32)
+        arr = np.asarray(scan, dtype=np.float32)  # (N, 3)
+        return arr[:, 1:3]  # angle, distance 컬럼만
 
     def _apply_transform(self, arr: np.ndarray) -> np.ndarray:
-        angles = arr[:, 0].copy()
+        # config 가 identity (offset=0, reverse=false) 면 copy/연산 전부 스킵.
+        if not self.reverse and self.angle_offset == 0.0:
+            return arr
+        angles = arr[:, 0]
         if self.reverse:
             angles = (360.0 - angles) % 360.0
-        angles = (angles + self.angle_offset) % 360.0
+        if self.angle_offset != 0.0:
+            angles = (angles + self.angle_offset) % 360.0
         result = arr.copy()
         result[:, 0] = angles
         return result
@@ -69,7 +76,6 @@ class LidarReader(metaclass=Singleton):
 
         arr = self._to_array(scan)
         self._scan_id += 1
-        log.debug(f"LiDAR raw scan_id={self._scan_id} points={len(arr)}")
         return LidarScan(points=arr, timestamp=time.time(), scan_id=self._scan_id)
 
     def read(self) -> LidarScan | None:

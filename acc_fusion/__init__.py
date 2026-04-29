@@ -50,6 +50,14 @@ class Fusion(metaclass=Singleton):
         self._push_thread: threading.Thread | None = None
         self._running = False
 
+        # update() 거리 계산 캐시 — push 워커 50Hz vs LiDAR 5–10Hz 의 redundant numpy 연산 제거.
+        # 같은 scan_id 면 직전 결과 재사용 → GIL 점유 시간 단축이 본 효과 (HMI/CAN 스레드 jitter ↓).
+        self._cached_scan_id: int = -1
+        self._cached_distance: int | None = None  # None = 전방 LiDAR 포인트 없음
+
+        # DEBUG_TRACE: update() 안 debug 로그 1Hz throttle 용 — 운영 안정화 후 제거 가능
+        self._last_update_log_time: float = 0.0
+
     def __enter__(self) -> "Fusion":
         if self._running:
             log.warning("Fusion already running.")
@@ -159,6 +167,13 @@ class Fusion(metaclass=Singleton):
         while not self._stop_event.wait(_PUSH_PERIOD_SEC):
             self._can.update_fusion_data(self.update())
 
+    # DEBUG_TRACE: update() 거리 추적 디버그 로그 헬퍼 — 운영 안정화 후 메서드/호출부/_last_update_log_time 통째로 제거 가능
+    def _throttled_debug(self, msg: str) -> None:
+        now = time.monotonic()
+        if now - self._last_update_log_time >= 1.0:
+            log.debug(msg)
+            self._last_update_log_time = now
+
     def get_annotated_frame(self) -> np.ndarray | None:
         """show_window=True 일 때 _camera_worker 가 채워둔 bbox 그려진 RGB 프레임 사본."""
         with self._annotated_lock:
@@ -187,18 +202,23 @@ class Fusion(metaclass=Singleton):
             scan = self._latest_scan
 
         if scan is None or len(scan.points) == 0:
-            log.debug("전방 차량 감지, LiDAR 데이터 없음")
+            self._throttled_debug("전방 차량 감지, LiDAR 데이터 없음")  # DEBUG_TRACE
             return FusionData(detected=True, distance=0)
 
-        angles = scan.points[:, 0]
-        front_mask = (angles <= _FRONT_ANGLE_DEG) | (angles >= 360 - _FRONT_ANGLE_DEG)
-        front_points = scan.points[front_mask]
+        # 같은 scan_id 면 캐시 재사용 — 50Hz update vs LiDAR 5–10Hz 의 redundant 계산 컷.
+        if scan.scan_id != self._cached_scan_id:
+            self._cached_scan_id = scan.scan_id
+            angles = scan.points[:, 0]
+            front_mask = (angles <= _FRONT_ANGLE_DEG) | (angles >= 360 - _FRONT_ANGLE_DEG)
+            front_points = scan.points[front_mask]
+            # lidar.py 가 [angle_deg, distance_mm] 컬럼으로 반환 (RPLiDAR raw=mm).
+            self._cached_distance = (
+                int(np.min(front_points[:, 1])) if len(front_points) else None
+            )
 
-        if len(front_points) == 0:
-            log.debug("전방 차량 감지, 전방 LiDAR 포인트 없음")
+        if self._cached_distance is None:
+            self._throttled_debug("전방 차량 감지, 전방 LiDAR 포인트 없음")  # DEBUG_TRACE
             return FusionData(detected=True, distance=0)
 
-        # lidar.py 가 [angle_deg, distance_mm] 컬럼으로 반환 (RPLiDAR raw=mm).
-        distance_mm = int(np.min(front_points[:, 1]))
-        log.debug(f"전방 차량 감지: distance={distance_mm}mm")
-        return FusionData(detected=True, distance=distance_mm)
+        self._throttled_debug(f"전방 차량 감지: distance={self._cached_distance}mm")  # DEBUG_TRACE
+        return FusionData(detected=True, distance=self._cached_distance)
