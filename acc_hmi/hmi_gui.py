@@ -9,6 +9,7 @@ ACC HMI GUI Application – PyQt5
 Ref: STK020, STK021, SYS018, SYS019, SYS029, SWR018, SWR019, SWR028
 """
 import math
+import os
 import signal
 import sys
 
@@ -800,6 +801,11 @@ class HmiWindow(QMainWindow):
 
 def gui_main(can_interface):
     """QApplication 을 띄우고 HMI 윈도우를 주입된 `can_interface` 로 실행."""
+    # opencv-python 휠은 import 시 QT_QPA_PLATFORM_PLUGIN_PATH 를 자기 디렉토리(cv2/qt/plugins)로
+    # 덮어쓴다. 거기 들어있는 vendored Qt5 는 시스템 PyQt5 와 ABI 가 안 맞아 xcb 로드가 실패하므로,
+    # QApplication 생성 직전에 시스템 Qt5 플러그인 경로로 되돌려 놓는다.
+    os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins"
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
