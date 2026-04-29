@@ -1,7 +1,7 @@
 """
 ACC Project — DBC 로드 + CAN 메시지 ID
 ========================================
-진실의 원천: ACC-CANDB/acc_db.dbc
+진실의 원천: ACC-CANDB/Project.dbc
 
 acc_can 하위 모듈 전역에서 이 파일을 거쳐 DBC 에 접근한다. 다른 모듈
 (예: acc_fusion) 도 CAN 메시지를 직접 송신할 일이 생기면
@@ -16,7 +16,7 @@ from pathlib import Path
 import cantools
 
 # 상대경로: ACC-RPI/acc_can/_dbc.py → parents[2]=/mnt/c/acc → ACC-CANDB/
-_DBC_PATH = Path(__file__).resolve().parents[2] / "ACC-CANDB" / "acc_db.dbc"
+_DBC_PATH = Path(__file__).resolve().parents[2] / "ACC-CANDB" / "Project.dbc"
 _db = cantools.database.load_file(str(_DBC_PATH))
 
 

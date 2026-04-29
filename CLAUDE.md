@@ -59,7 +59,7 @@ uv run python acc_hmi/main.py   # 시뮬레이션 모드로 GUI 실행
 
 ## 진실의 원천 — CAN 계약은 DBC
 
-**모든 CAN ID / 페이로드 레이아웃 / 시그널 범위는 `../ACC-CANDB/acc_db.dbc` 가 결정한다.** Python 코드는 하드코딩하지 않는다.
+**모든 CAN ID / 페이로드 레이아웃 / 시그널 범위는 `../ACC-CANDB/Project.dbc` 가 결정한다.** Python 코드는 하드코딩하지 않는다.
 
 `acc_can/_dbc.py` 가 import 시점에 DBC 를 로드하고 `MSG_ID_*` 상수를 DBC 에서 조회한다. `_codec.py` 의 encode/decode 는 `cantools.database.Message.encode(signals_dict)` 에 비트/바이트 레이아웃을 전부 위임한다.
 
