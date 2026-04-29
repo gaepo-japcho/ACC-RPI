@@ -34,7 +34,7 @@ from interfaces.pedal_input import PedalInput
 from acc_hmi.acc_state import (
     BUTTON_AVAILABILITY,
     CLR, DIST_CLR, STATE_TEXT, CLR_HUD,
-    DEFAULT_DISTANCE_LEVEL,
+    DEFAULT_DISTANCE_LEVEL, DEFAULT_SET_SPEED_CMS,
     MAX_SET_SPEED_CMS, MIN_SET_SPEED_CMS, SPEED_INCREMENT_CMS,
     fault_banner_text, gap_color, is_active, is_override_visible,
     link_indicator, pwm_display_pct, set_speed_label, status_from_int,
@@ -249,9 +249,11 @@ class HmiWindow(QMainWindow):
     # ════════════════════════════════════════════════════════════
 
     def _on_acc_toggle(self):
-        # OFF → ON 전이일 때 현재 자차 속도를 목표 속도로 캡처.
-        # 액셀 페달 인가 중에도 ACC ON 가능 — ECU 가 SET_ACC_SPD=0 을 보고 ON 거부하는 현상 방지.
-        # send_acc_setting + send_button_input 은 같은 _tx_acc_ctrl(50ms) 프레임에 실린다.
+        # OFF ↔ ON 전이를 동일 ACC_CTRL(50ms) 프레임에 set_speed 와 함께 실어 보낸다.
+        # OFF → ON: 자차 현재 속도를 목표 속도로 캡처 (액셀 인가 중에도 ON 허용 — ECU 가
+        #          SET_ACC_SPD=0 을 보고 ON 거부하는 현상 방지).
+        # ON → OFF: 목표 속도를 DEFAULT_SET_SPEED_CMS 로 리셋. 미리셋 시 다음 ON 때
+        #          ECU 가 이전 목표 속도를 그대로 사용해 의도치 않은 속도로 주행하는 현상 방지.
         status = status_from_int(self._can.get_acc_info().status)
         was_off = (status == AccStatus.OFF)
         if was_off:
@@ -260,6 +262,11 @@ class HmiWindow(QMainWindow):
                 set_speed=captured, distance_level=self._last_distance_level,
             ))
             self._last_set_speed = captured
+        else:
+            self._can.send_acc_setting(AccSetting(
+                set_speed=DEFAULT_SET_SPEED_CMS, distance_level=self._last_distance_level,
+            ))
+            self._last_set_speed = DEFAULT_SET_SPEED_CMS
         self._can.send_button_input(ButtonInput(
             btn_acc_off=True, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=None,
         ))
