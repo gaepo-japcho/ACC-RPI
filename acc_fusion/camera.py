@@ -1,4 +1,3 @@
-import cv2
 import time
 import numpy as np
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ class CameraReader(metaclass=Singleton):
     ):
         """
         Args:
-            source: 카메라 인덱스(int) 또는 영상 파일 경로(str)
+            source: 카메라 인덱스(int) 또는 영상 파일 경로(str) — Picamera2 사용 시 무시됨
             width: 캡처 해상도 너비
             height: 캡처 해상도 높이
             fps: 목표 FPS
@@ -35,38 +34,46 @@ class CameraReader(metaclass=Singleton):
         self.height = height
         self.fps = fps
 
-        self._cap: cv2.VideoCapture | None = None
+        self._cam = None
         self._frame_id = 0
 
     def open(self) -> bool:
-        self._cap = cv2.VideoCapture(self.source)
-        if not self._cap.isOpened():
-            log.error(f"카메라 열기 실패: source={self.source}")
+        try:
+            from picamera2 import Picamera2
+            self._cam = Picamera2()
+            # FrameDurationLimits 가 fps 의 진실의 원천 (us 단위, min/max 동일값으로 고정).
+            # config.toml 의 fps 인자는 여기로 전달 — sensor 가 cap 을 무시하면 detect/yolo
+            # 로그가 cap 보다 높게 찍히므로 적용 후 확인 필요.
+            frame_duration_us = int(1_000_000 / self.fps)
+            config = self._cam.create_preview_configuration(
+                main={"size": (self.width, self.height), "format": "RGB888"},
+                buffer_count=2,
+                controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+            )
+            self._cam.configure(config)
+            self._cam.start()
+            log.info(f"카메라 열기 성공 (Picamera2): {self.width}x{self.height} @{self.fps}fps")
+            return True
+        except Exception as e:
+            log.error(f"카메라 열기 실패: {e}")
             return False
 
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self._cap.set(cv2.CAP_PROP_FPS, self.fps)
-        log.info(f"카메라 열기 성공: source={self.source} {self.width}x{self.height} @{self.fps}fps")
-        return True
-
     def read(self) -> CameraFrame | None:
-        if self._cap is None or not self._cap.isOpened():
+        if self._cam is None:
             return None
-
-        ret, frame = self._cap.read()
-        if not ret:
-            log.warning("카메라 프레임 읽기 실패")
+        try:
+            frame = self._cam.capture_array()
+            self._frame_id += 1
+            return CameraFrame(image=frame, timestamp=time.time(), frame_id=self._frame_id)
+        except Exception as e:
+            log.warning(f"카메라 프레임 읽기 실패: {e}")
             return None
-
-        self._frame_id += 1
-        return CameraFrame(image=frame, timestamp=time.time(), frame_id=self._frame_id)
 
     def close(self):
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
-            log.info(f"카메라 닫힘: source={self.source}")
+        if self._cam is not None:
+            self._cam.stop()
+            self._cam = None
+            log.info("카메라 닫힘")
 
     def __enter__(self):
         if not self.open():
@@ -90,4 +97,4 @@ class CameraReader(metaclass=Singleton):
 
     @property
     def is_open(self) -> bool:
-        return self._cap is not None and self._cap.isOpened()
+        return self._cam is not None

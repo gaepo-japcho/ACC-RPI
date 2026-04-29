@@ -9,6 +9,7 @@ ACC HMI GUI Application – PyQt5
 Ref: STK020, STK021, SYS018, SYS019, SYS029, SWR018, SWR019, SWR028
 """
 import math
+import os
 import signal
 import sys
 
@@ -19,7 +20,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
 from PyQt5.QtGui import (
     QFont, QFontDatabase, QColor, QPalette, QPainter, QPen, QBrush,
-    QConicalGradient,
+    QConicalGradient, QImage, QPixmap,
 )
 
 from interfaces.acc_status import AccStatus
@@ -29,8 +30,8 @@ from interfaces.acc_setting import AccSetting
 
 from acc_hmi.acc_state import (
     ACTIVE_STATUSES, BUTTON_AVAILABILITY,
-    MIN_SET_SPEED_CMS, SPEED_INCREMENT_CMS, SPEED_GAUGE_MAX_CMS,
-    DEFAULT_DISTANCE_LEVEL, status_from_int,
+    MIN_SET_SPEED_CMS, MAX_SET_SPEED_CMS, SPEED_INCREMENT_CMS,
+    SPEED_GAUGE_MAX_CMS, DEFAULT_DISTANCE_LEVEL, status_from_int,
 )
 
 
@@ -631,6 +632,10 @@ class HmiWindow(QMainWindow):
     # ── Input → CanInterface ──
 
     def _on_acc_toggle(self):
+        # OFF→ON 전이일 때만 ego 캡처해 SET_ACC_SPD 에 실어 보냄 (FSM T4b 가 SetSpeedReq 캡처).
+        # ON→OFF 는 set_speed 무관 — 버튼만 송신.
+        if status_from_int(self._can.get_acc_info().status) == AccStatus.OFF:
+            self._capture_ego_setpoint()
         self._can.send_button_input(ButtonInput(
             btn_acc_off=True, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=None,
         ))
@@ -641,9 +646,22 @@ class HmiWindow(QMainWindow):
         ))
 
     def _on_set(self):
+        # STANDBY→CRUISING/FOLLOWING (T6/T7) — RPi 가 ego 를 SetSpeedReq 에 실어 보내야 ECU 가 캡처.
+        self._capture_ego_setpoint()
         self._can.send_button_input(ButtonInput(
             btn_acc_off=None, btn_acc_set=True, btn_acc_res=None, btn_acc_cancel=None,
         ))
+
+    def _capture_ego_setpoint(self) -> None:
+        """현재 차속을 [MIN, MAX] 로 클램프해 다음 ACC_CTRL.SET_ACC_SPD 페이로드에 실어 보낸다.
+        ECU FSM 의 T4b/T6/T7 진입 캡처 정책 (AccStateMachine.c v1.2) 과 1:1 대응."""
+        ego = int(round(self._can.get_vehicle_info().current_speed))
+        ego_clamped = max(MIN_SET_SPEED_CMS, min(MAX_SET_SPEED_CMS, ego))
+        self._can.send_acc_setting(AccSetting(
+            set_speed=ego_clamped,
+            distance_level=self._last_distance_level,
+        ))
+        self._last_set_speed = ego_clamped
 
     def _on_res(self):
         self._can.send_button_input(ButtonInput(
@@ -651,7 +669,7 @@ class HmiWindow(QMainWindow):
         ))
 
     def _on_speed_up(self):
-        new_spd = self._last_set_speed + SPEED_INCREMENT_CMS
+        new_spd = min(self._last_set_speed + SPEED_INCREMENT_CMS, MAX_SET_SPEED_CMS)
         self._can.send_acc_setting(AccSetting(
             set_speed=new_spd, distance_level=self._last_distance_level,
         ))
@@ -795,11 +813,50 @@ class HmiWindow(QMainWindow):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  YOLO Debug Preview (PyQt5)
+# ═══════════════════════════════════════════════════════════════
+
+class YoloPreview(QWidget):
+    """Fusion 의 annotated 프레임을 30Hz 로 폴링해 표시하는 디버그 창."""
+
+    def __init__(self, fusion):
+        super().__init__()
+        self._fusion = fusion
+        self.setWindowTitle("YOLO Debug")
+        self.setStyleSheet(f"background-color: {BG};")
+        self._label = QLabel("waiting for frame…")
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet(f"color: {TEXT};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._label)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(66)  # ~15Hz — 메인 스레드 부하 ↓ (버튼 이벤트 우선순위)
+
+    def _refresh(self) -> None:
+        frame = self._fusion.get_annotated_frame()
+        if frame is None:
+            return
+        # Picamera2 RGB888 = QImage Format_RGB888 그대로 사용 가능
+        h, w, _ = frame.shape
+        img = QImage(frame.data, w, h, w * 3, QImage.Format_RGB888)
+        # QImage 가 numpy 버퍼를 참조하므로 copy() 로 소유권 이전
+        self._label.setPixmap(QPixmap.fromImage(img.copy()))
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Entry Point
 # ═══════════════════════════════════════════════════════════════
 
-def gui_main(can_interface):
+def gui_main(can_interface, fusion=None):
     """QApplication 을 띄우고 HMI 윈도우를 주입된 `can_interface` 로 실행."""
+    # opencv-python 휠은 import 시 QT_QPA_PLATFORM_PLUGIN_PATH 를 자기 디렉토리(cv2/qt/plugins)로
+    # 덮어쓴다. 거기 들어있는 vendored Qt5 는 시스템 PyQt5 와 ABI 가 안 맞아 xcb 로드가 실패하므로,
+    # QApplication 생성 직전에 시스템 Qt5 플러그인 경로로 되돌려 놓는다.
+    os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins"
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
@@ -819,4 +876,11 @@ def gui_main(can_interface):
 
     win = HmiWindow(can_interface)
     win.showFullScreen()
+
+    preview = None
+    if fusion is not None and fusion.show_window:
+        preview = YoloPreview(fusion)
+        preview.resize(640, 480)
+        preview.show()
+
     return app.exec_()
