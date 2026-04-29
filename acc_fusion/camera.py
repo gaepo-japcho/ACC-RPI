@@ -42,7 +42,8 @@ class CameraReader(metaclass=Singleton):
             from picamera2 import Picamera2
             self._cam = Picamera2()
             config = self._cam.create_preview_configuration(
-                main={"size": (self.width, self.height), "format": "RGB888"}
+                main={"size": (self.width, self.height), "format": "RGB888"},
+                buffer_count=2,
             )
             self._cam.configure(config)
             self._cam.start()
