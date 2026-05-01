@@ -1,0 +1,18 @@
+# ACC 팀 통합 .mailmap — 5 서브모듈 공통
+# 동일인의 여러 git identity 를 정본 하나로 통합
+
+# Park JongBeum
+Park JongBeum <dev@parkjb.com> Park JongBeum <>
+Park JongBeum <dev@parkjb.com> parkjbdev <>
+Park JongBeum <dev@parkjb.com> parkjbdev <dev@parkjb.com>
+
+# Yurim Kim
+Yurim Kim <kimyurimdl@gmail.com> yurim <kimyr8469@ynu.ac.kr>
+Yurim Kim <kimyurimdl@gmail.com> yurimdl1 <kimyr8469@ynu.ac.kr>
+Yurim Kim <kimyurimdl@gmail.com> Yurim Kim <yurim@Yurimui-MacBookAir.local>
+
+# BAE-Jungwoo
+BAE-Jungwoo <john4573@naver.com> BAE-Jungwoo <113417378+BAE-Jungwoo@users.noreply.github.com>
+
+# dahee
+dahee <dh4573@naver.com> dahee <67455705+ekgml4573@users.noreply.github.com>
