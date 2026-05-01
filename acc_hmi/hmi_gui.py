@@ -249,25 +249,10 @@ class HmiWindow(QMainWindow):
     # ════════════════════════════════════════════════════════════
 
     def _on_acc_toggle(self):
-        # OFF ↔ ON 전이를 동일 ACC_CTRL(50ms) 프레임에 set_speed 와 함께 실어 보낸다.
-        # OFF → ON (= STANDBY): 자차 현재 속도를 목표 속도로 캡처 (액셀 인가 중에도 ON 허용 —
-        #          ECU 가 SET_ACC_SPD=0 을 보고 ON 거부하는 현상 방지).
-        # ON → OFF: 목표 속도를 DEFAULT_SET_SPEED_CMS 로 리셋. 미리셋 시 다음 ON 때
-        #          ECU 가 이전 목표 속도를 그대로 사용해 의도치 않은 속도로 주행하는 현상 방지.
-        # PWM 은 어떤 버튼에서도 리셋하지 않는다 — 사용자 페달 입력이 항상 우선.
-        # (브레이크 인가 시에만 안전상 강제 0 — _on_brake 참조)
-        status = status_from_int(self._can.get_acc_info().status)
-        if status == AccStatus.OFF:
-            captured = self._capture_current_speed()
-            self._can.send_acc_setting(AccSetting(
-                set_speed=captured, distance_level=self._last_distance_level,
-            ))
-            self._last_set_speed = captured
-        else:
-            self._can.send_acc_setting(AccSetting(
-                set_speed=DEFAULT_SET_SPEED_CMS, distance_level=self._last_distance_level,
-            ))
-            self._last_set_speed = DEFAULT_SET_SPEED_CMS
+        # OFF→ON 전이일 때만 ego 캡처해 SET_ACC_SPD 에 실어 보냄 (FSM T4b 가 SetSpeedReq 캡처).
+        # ON→OFF 는 set_speed 무관 — 버튼만 송신.
+        if status_from_int(self._can.get_acc_info().status) == AccStatus.OFF:
+            self._capture_ego_setpoint()
         self._can.send_button_input(ButtonInput(
             btn_acc_off=True, btn_acc_set=None, btn_acc_res=None, btn_acc_cancel=None,
         ))
@@ -278,23 +263,22 @@ class HmiWindow(QMainWindow):
         ))
 
     def _on_set(self):
-        # STANDBY 에서 액셀 인가 중 SET 누를 때 현재 자차 속도를 목표로 캡처.
-        # set_speed 를 버튼 edge 와 같은 ACC_CTRL 프레임에 실어 ECU 가 stale 0 으로
-        # OFF↔ON 핑퐁 치는 현상을 막는다.
-        captured = self._capture_current_speed()
-        self._can.send_acc_setting(AccSetting(
-            set_speed=captured, distance_level=self._last_distance_level,
-        ))
-        self._last_set_speed = captured
+        # STANDBY→CRUISING/FOLLOWING (T6/T7) — RPi 가 ego 를 SetSpeedReq 에 실어 보내야 ECU 가 캡처.
+        self._capture_ego_setpoint()
         self._can.send_button_input(ButtonInput(
             btn_acc_off=None, btn_acc_set=True, btn_acc_res=None, btn_acc_cancel=None,
         ))
 
-    def _capture_current_speed(self) -> int:
-        """현재 자차 속도(cm/s) → ACC 목표 속도. [MIN, MAX] 범위로 clamp."""
-        veh = self._can.get_vehicle_info()
-        speed = int(round(float(veh.current_speed)))
-        return max(MIN_SET_SPEED_CMS, min(MAX_SET_SPEED_CMS, speed))
+    def _capture_ego_setpoint(self) -> None:
+        """현재 차속을 [MIN, MAX] 로 클램프해 다음 ACC_CTRL.SET_ACC_SPD 페이로드에 실어 보낸다.
+        ECU FSM 의 T4b/T6/T7 진입 캡처 정책 (AccStateMachine.c v1.2) 과 1:1 대응."""
+        ego = int(round(self._can.get_vehicle_info().current_speed))
+        ego_clamped = max(MIN_SET_SPEED_CMS, min(MAX_SET_SPEED_CMS, ego))
+        self._can.send_acc_setting(AccSetting(
+            set_speed=ego_clamped,
+            distance_level=self._last_distance_level,
+        ))
+        self._last_set_speed = ego_clamped
 
     def _on_res(self):
         self._can.send_button_input(ButtonInput(
